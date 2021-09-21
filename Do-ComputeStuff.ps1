@@ -7,7 +7,7 @@ param(
 # $env:PATH="d:\src\do-compute;$env:path"
 
 switch ($ResourceType) {
-  "Compute" { $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers))'"; break }
+  "Compute" { $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers),id)'"; break }
   "MIG" { $outputCmd="gcloud compute instance-groups managed list --format='csv(name,LOCATION,size)'"; break }
 }
 
@@ -33,7 +33,7 @@ do {
   if ([string]::IsNullOrEmpty($Answer)) {
     $outText=($instances | Format-Table | Out-String).Replace("`r`n`r`n", "")
     Write-Host $outText
-    Write-Host "S) SSH`tL) Serial port Log`tC) Start-up sCript log`tU) Update instance template`n"
+    Write-Host "S) SSH`tO) OUTPUT:serial-port `tL) LOG:start-up `tT) TAIL:start-up `tU) UPDATE:instance-template`n"
 
     $Answer = Read-Host `n'Enter selection'
   }
@@ -46,12 +46,16 @@ if ($Answer -match '^\d$') {
   $action = "s" # SSH
   [int]$item = $Answer
 }
-elseif ($Answer -match '^[a-z]\d$') {
+elseif ($Answer -match '^([a-z]\d$|q)') {
   $action = $Answer[0]
   [int]$item = $Answer.Substring(1)
 }
 else {
   write-error "Unable to parse response."
+  exit
+}
+
+if ($Answer -eq 'q') {
   exit
 }
 
@@ -66,8 +70,9 @@ if($UseInternalIpSsh) {
 switch ($action) {
   "s" { $type="hcmd"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name)"; break }
   "u" { $type="cmd"; $argListMid = "compute instance-groups managed update-instances --region=$($sel.zone -replace '..$') --minimal-action=replace $($sel.'created-by') --instances=$($sel.name)"; break }
-  "l" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"; break }
-  "c" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name) | grep startup-script"; break }
+  "o" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"; break }
+  "l" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name) | grep startup-script"; break }
+  "t" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance AND resource.labels.instance_id=$($sel.id)`" --format=`"value(format('$($sel.name):{0}',json_payload.message).sub(':startup-script:',':'))`""; break }
   "q" { $type="quit"; return 0; break }
 }
 
