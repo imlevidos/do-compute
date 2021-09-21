@@ -1,11 +1,13 @@
 param(
   [Parameter()][ValidateSet('Compute','MIG')][string[]]$ResourceType = 'Compute',
   [Switch]$UseInternalIpSsh,
-  [string]$Answer
+  [Parameter(Position=0)][string]$Answer
 )
 
+# $env:PATH="d:\src\do-compute;$env:path"
+
 switch ($ResourceType) {
-  "Compute" { $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers))'"; break }
+  "Compute" { $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers))'"; break }
   "MIG" { $outputCmd="gcloud compute instance-groups managed list --format='csv(name,LOCATION,size)'"; break }
 }
 
@@ -66,7 +68,10 @@ switch ($action) {
   "u" { $type="cmd"; $argListMid = "compute instance-groups managed update-instances --region=$($sel.zone -replace '..$') --minimal-action=replace $($sel.'created-by') --instances=$($sel.name)"; break }
   "l" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"; break }
   "c" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name) | grep startup-script"; break }
+  "q" { $type="quit"; return 0; break }
 }
+
+
 
 $HAVE_CONEMU=$true # TBC - Add conemu detection
 
