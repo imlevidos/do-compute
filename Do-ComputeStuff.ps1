@@ -46,7 +46,7 @@ if ($Answer -match '^\d$') {
   $action = "s" # SSH
   [int]$item = $Answer
 }
-elseif ($Answer -match '^([a-z]\d$|q)') {
+elseif ($Answer -match '^([a-z]\d$|q|t)') {
   $action = $Answer[0]
   [int]$item = $Answer.Substring(1)
 }
@@ -55,8 +55,9 @@ else {
   exit
 }
 
-if ($Answer -eq 'q') {
-  exit
+switch ($answer) {
+  'q' { exit }
+  't' { $action = 'ta' } # Tail all
 }
 
 $sel = $instances[$item-1] # Selection
@@ -73,6 +74,7 @@ switch ($action) {
   "o" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"; break }
   "l" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name) | grep startup-script"; break }
   "t" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance AND resource.labels.instance_id=$($sel.id)`" --format=`"value(format('$($sel.name):{0}',json_payload.message).sub(':startup-script:',':'))`""; break }
+  "ta" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }  
   "q" { $type="quit"; return 0; break }
 }
 
