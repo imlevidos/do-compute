@@ -15,7 +15,8 @@ do {
   $output=$(Invoke-Expression $outputCmd)
 
   if ($output.Count -eq 0) {
-    ThrowError "No $($ResourceType.ToLower()) instances found"
+    $Raise_Error = "No $($ResourceType.ToLower()) instances found in GCP project."
+    Throw $Raise_Error
   }
 
   for ($i=0; $i -lt $output.Count; $i++) {
@@ -33,7 +34,7 @@ do {
   if ([string]::IsNullOrEmpty($Answer)) {
     $outText=($instances | Format-Table | Out-String).Replace("`r`n`r`n", "")
     Write-Host $outText
-    Write-Host "S) SSH`tO) OUTPUT:serial-port `tL) LOG:start-up `tT) TAIL:start-up `tU) UPDATE:instance-template`n"
+    Write-Host "[S]SH`t[O]UTPUT:serial-port `t[L]OG:start-up `t[T]AIL:start-up `t[U]PDATE:instance-template`n"
 
     $Answer = Read-Host `n'Enter selection'
   }
