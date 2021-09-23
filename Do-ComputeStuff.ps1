@@ -1,14 +1,45 @@
 param(
   [Parameter()][ValidateSet('Compute','MIG')][string[]]$ResourceType = 'Compute',
-  [Switch]$UseInternalIpSsh,
-  [Parameter(Position=0)][string]$Answer
+  [nullable[bool]]$UseInternalIpSsh,
+  [Parameter(Position=0)][string]$Answer,
+  [Switch]$Install
 )
 
 # $env:PATH="d:\src\do-compute;$env:path"
+if ($Install -eq $true) {
+  $existingPaths = `
+    [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User) + `
+    [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine) `
+    -split ';'
+
+  if ($existingPaths -notcontains $PSScriptRoot) {
+    Write-Output 'INSTALL: Adding script location to %PATH% as user env var...'
+
+    [Environment]::SetEnvironmentVariable("Path", "$env:Path;$PSScriptRoot", [System.EnvironmentVariableTarget]::User)
+  }
+
+  if ($env:Path -split ';' -notcontains $PSScriptRoot) {
+    Write-Output 'INSTALL: Refreshing %PATH% in current shell...'
+    $env:Path="$PSScriptRoot;$env:Path"
+  }
+  else {
+    Write-Output 'INSTALL: $PSScriptRoot already in %PATH%'
+  }
+
+  exit 0
+}
 
 switch ($ResourceType) {
-  "Compute" { $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers),id)'"; break }
-  "MIG" { $outputCmd="gcloud compute instance-groups managed list --format='csv(name,LOCATION,size)'"; break }
+  "Compute" { 
+    $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers),id)'"; 
+    $instructions="[S]SH`t[O]UTPUT:serial-port `t[L]OG:start-up `t[T]AIL:start-up `t[U]PDATE:instance-template`t[R]ESET`t[Q]UIT"
+    break 
+  }
+  "MIG" { 
+    $outputCmd="gcloud compute instance-groups managed list --format='csv(name,LOCATION,size)'";
+    $instructions="[S]ize"
+    break 
+  }
 }
 
 do {
@@ -30,11 +61,11 @@ do {
   }
 
   $instances=ConvertFrom-Csv -InputObject $output
+  $outText=($instances | Format-Table | Out-String).Replace("`r`n`r`n", "")
 
-  if ([string]::IsNullOrEmpty($Answer)) {
-    $outText=($instances | Format-Table | Out-String).Replace("`r`n`r`n", "")
+  if ([string]::IsNullOrEmpty($Answer)) {    
     Write-Host $outText
-    Write-Host "[S]SH`t[O]UTPUT:serial-port `t[L]OG:start-up `t[T]AIL:start-up `t[U]PDATE:instance-template`n"
+    Write-Host $instructions
 
     $Answer = Read-Host `n'Enter selection'
   }
@@ -42,14 +73,22 @@ do {
 } while ([string]::IsNullOrEmpty($Answer))
 
 
-if ($Answer -match '^\d$') {
+if ($ResourceType -eq 'Compute' -and $Answer -match '^\d$') {
   # Number only, default action is ssh
   $action = "s" # SSH
   [int]$item = $Answer
 }
-elseif ($Answer -match '^([a-z]\d$|q|t)') {
+elseif ($ResourceType -eq 'Compute' -and $Answer -match '^([a-z]\d$|q|t)$') {
   $action = $Answer[0]
   [int]$item = $Answer.Substring(1)
+}
+elseif ($ResourceType -eq 'MIG' -and $answer -match '^(q)$') {
+  $action = $Answer[0]
+}
+elseif ($ResourceType -eq 'MIG' -and $answer -match '^(s\d\.\d)$') {
+  $action = $Answer[0]
+  [int]$item = $Answer.Substring(1,1)
+  [int]$param = $Answer.Substring(3,1)  
 }
 else {
   write-error "Unable to parse response."
@@ -61,22 +100,37 @@ switch ($answer) {
   't' { $action = 'ta' } # Tail all
 }
 
-$sel = $instances[$item-1] # Selection
+if ($item -gt 0) {
+  $sel = $instances[$item-1] # Selection
+  Write-Host "Your selection: $sel`n"
+}
 
-Write-Host "You selected: $sel`n"
+if ($UseInternalIpSsh -eq $null) {
+  # -UseInternalIpSsh switch not present, use proactive detection  
+  if ((gwmi win32_computersystem).partofdomain -eq $true) {
+    # Domain joined workstation, use Internal IP for SSH
+    $UseInternalIpSsh = $true
+  }
+  else {
+    # Standalone workstation, use IAP
+    $UseInternalIpSsh = $false
+  }
+}
 
-if($UseInternalIpSsh) {
+if ($UseInternalIpSsh) {
   $UseInternalIpCmd="--internal-ip"
 }
 
-switch ($action) {
-  "s" { $type="hcmd"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name)"; break }
-  "u" { $type="cmd"; $argListMid = "compute instance-groups managed update-instances --region=$($sel.zone -replace '..$') --minimal-action=replace $($sel.'created-by') --instances=$($sel.name)"; break }
-  "o" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"; break }
-  "l" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name) | grep startup-script"; break }
-  "t" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance AND resource.labels.instance_id=$($sel.id)`" --format=`"value(format('$($sel.name):{0}',json_payload.message).sub(':startup-script:',':'))`""; break }
-  "ta" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }  
-  "q" { $type="quit"; return 0; break }
+switch -wildcard ("$ResourceType`:$action") {
+  "*:q" { exit; break }
+  "Compute:s" { $type="hcmd"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name)"; break }
+  "Compute:u" { $type="cmd"; $argListMid = "compute instance-groups managed update-instances --region=$($sel.zone -replace '..$') --minimal-action=replace $($sel.'created-by') --instances=$($sel.name)"; break }
+  "Compute:r" { $type="cmd"; $argListMid = "compute instances reset --zone=$($sel.zone) $($sel.name)"; break }
+  "Compute:o" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"; break }
+  "Compute:l" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name) | grep startup-script"; break }
+  "Compute:t" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance AND resource.labels.instance_id=$($sel.id)`" --format=`"value(format('$($sel.name):{0}',json_payload.message).sub(':startup-script:',':'))`""; break }
+  "Compute:ta" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }  
+  "MIG:s" { $type="cmd"; $argListMid = "compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)"; break }
 }
 
 
