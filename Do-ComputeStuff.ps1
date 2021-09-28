@@ -2,7 +2,8 @@ param(
   [Parameter()][ValidateSet('Compute','MIG')][string[]]$ResourceType = 'Compute',
   [nullable[bool]]$UseInternalIpSsh,
   [Parameter(Position=0)][string]$Answer,
-  [Switch]$Install
+  [Switch]$Install,
+  [Switch]${Show-Command}
 )
 
 # $env:PATH="d:\src\do-compute;$env:path"
@@ -141,19 +142,30 @@ $HAVE_CONEMU=$true # TBC - Add conemu detection
 $shell = "cmd"
 $shellParams = "/c"
 $windowStyle = "Normal"
+$SleepCmd = "& timeout /t 60"
 
-if ($type -eq "hcmd") {
+if (${Show-Command} -eq $true) {
+  $shellParams = "COMMAND:"
+  $SleepCmd = ""
+}
+elseif ($type -eq "hcmd") {
   $windowStyle = "Minimized"
 }
 elseif ($type -eq "log") {
   $windowStyle = "Maximized"
+  $SleepCmd = "& pause"
   if ($HAVE_CONEMU) {
     $shell = "conemu64"
     $shellParams = "-run"
   }
 }
 
+$argList = "$shellParams gcloud $argListMid $SleepCmd"
 
-$argList = "$shellParams gcloud $argListMid & pause"
+if (${Show-Command} -eq $true) {
+  Write-Host "$argList`n"
+}
+else {
+  Start-Process $shell -ArgumentList "$argList " -WindowStyle $windowStyle
+}
 
-Start-Process $shell -ArgumentList "$argList" -WindowStyle $windowStyle
