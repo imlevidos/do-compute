@@ -1,8 +1,9 @@
 param(
-  [Parameter()][ValidateSet('Compute','MIG')][string[]]$ResourceType = 'Compute',
+  [Parameter()][ValidateSet('Compute','MIG','backend-services')][string[]]$ResourceType = 'Compute',
   [nullable[bool]]$UseInternalIpSsh,
   [Parameter(Position=0)][string]$Answer,
-  [Switch]$Install
+  [Switch]$Install,
+  [Switch]${Show-Command}
 )
 
 # $env:PATH="d:\src\do-compute;$env:path"
@@ -32,14 +33,20 @@ if ($Install -eq $true) {
 switch ($ResourceType) {
   "Compute" { 
     $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers),id)'"; 
-    $instructions="[S]SH`t[O]UTPUT:serial-port `t[L]OG:start-up `t[T]AIL:start-up `t[U]PDATE:instance-template`t[R]ESET`t[Q]UIT"
+    $instructions="[S]SH`t[O]UTPUT:serial-port `t[L]OG:start-up `t[T]AIL:start-up `t[U]PDATE:instance-template`t[R]ESET`t[D]ESCRIBE`t[Q]UIT"
     break 
   }
   "MIG" { 
     $outputCmd="gcloud compute instance-groups managed list --format='csv(name,LOCATION,size)'";
-    $instructions="[S]ize"
+    $instructions="[R#=#]ESIZE`t[Q]UIT"
     break 
   }
+  "backend-services" {
+    $outputCmd="gcloud compute backend-services list --format='csv(name,region.scope(regions),backends[0].group.scope(instanceGroups))'";
+    $instructions="[P]OOL:list`t[Q]UIT"
+    break 
+  }
+
 }
 
 do {
@@ -82,13 +89,22 @@ elseif ($ResourceType -eq 'Compute' -and $Answer -match '^([a-z]\d$|q|t)$') {
   $action = $Answer[0]
   [int]$item = $Answer.Substring(1)
 }
-elseif ($ResourceType -eq 'MIG' -and $answer -match '^(q)$') {
+elseif ($ResourceType -eq 'MIG' -and $answer -match '^[q]$') {
   $action = $Answer[0]
 }
-elseif ($ResourceType -eq 'MIG' -and $answer -match '^(s\d\.\d)$') {
+elseif ($ResourceType -eq 'MIG' -and $answer -match '^[p]\d$') {
+  $action = $Answer[0]
+  [int]$item = $Answer.Substring(1)  
+}
+elseif ($ResourceType -eq 'MIG' -and $answer -match '^([r]\d[\.=]\d)$') {
   $action = $Answer[0]
   [int]$item = $Answer.Substring(1,1)
   [int]$param = $Answer.Substring(3,1)  
+  Write-Host "item:$item, param:$param"
+}
+elseif ($ResourceType -eq 'backend-services' -and $answer -match '^[p]\d$') {
+  $action = $Answer[0]
+  [int]$item = $Answer.Substring(1)    
 }
 else {
   write-error "Unable to parse response."
@@ -128,9 +144,12 @@ switch -wildcard ("$ResourceType`:$action") {
   "Compute:r" { $type="cmd"; $argListMid = "compute instances reset --zone=$($sel.zone) $($sel.name)"; break }
   "Compute:o" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"; break }
   "Compute:l" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name) | grep startup-script"; break }
+  "Compute:d" { $type="inline"; $argListMid = "compute instances describe --zone=$($sel.zone) $($sel.name)"; break }
   "Compute:t" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance AND resource.labels.instance_id=$($sel.id)`" --format=`"value(format('$($sel.name):{0}',json_payload.message).sub(':startup-script:',':'))`""; break }
   "Compute:ta" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }  
-  "MIG:s" { $type="cmd"; $argListMid = "compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)"; break }
+  "MIG:r" { $type="cmd"; $argListMid = "compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)"; break }
+  "backend-services:p" { $type="inline"; $argListMid = "compute backend-services get-health $($sel.name) --region=$($sel.region) --format='table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label='zone',status.healthStatus.ipAddress,status.healthStatus.healthState)' --flatten='status.healthStatus'"; break }
+  default { $Raise_Error = "No action defined for ``$ResourceType`:$action``" ; Throw $Raise_Error }
 }
 
 
@@ -141,19 +160,38 @@ $HAVE_CONEMU=$true # TBC - Add conemu detection
 $shell = "cmd"
 $shellParams = "/c"
 $windowStyle = "Normal"
+$SleepCmd = "& timeout /t 60"
 
-if ($type -eq "hcmd") {
+if (${Show-Command} -eq $true) {
+  $shellParams = "COMMAND:"
+  $SleepCmd = ""
+}
+elseif ($type -eq "inline") {
+  $shellParams = ""
+  $SleepCmd = ""
+}
+elseif ($type -eq "hcmd") {
   $windowStyle = "Minimized"
 }
 elseif ($type -eq "log") {
   $windowStyle = "Maximized"
+  $SleepCmd = "& pause"
   if ($HAVE_CONEMU) {
     $shell = "conemu64"
     $shellParams = "-run"
   }
 }
 
+$argList = "$shellParams gcloud $argListMid $SleepCmd"
 
-$argList = "$shellParams gcloud $argListMid & pause"
+if (${Show-Command} -eq $true) {
+  Write-Host "$argList`n"
+}
+elseif ($type -eq "inline") {
+  Invoke-Expression "& $argList"
+  Write-Host ''
+}
+else {
+  Start-Process $shell -ArgumentList "$argList " -WindowStyle $windowStyle
+}
 
-Start-Process $shell -ArgumentList "$argList" -WindowStyle $windowStyle
