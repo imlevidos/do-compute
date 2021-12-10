@@ -1,5 +1,5 @@
 param(
-  [Parameter()][ValidateSet('Compute','MIG','backend-services')][string[]]$ResourceType = 'Compute',
+  [Parameter()][ValidateSet('Compute','Configurations','MIG','backend-services')][string[]]$ResourceType = 'Compute',
   [nullable[bool]]$UseInternalIpSsh,
   [Parameter(Position=0)][string]$Answer,
   [Switch]$Install,
@@ -46,7 +46,11 @@ switch ($ResourceType) {
     $instructions="[P]OOL:list`t[Q]UIT"
     break 
   }
-
+  "Configurations" {
+    $outputCmd="gcloud config configurations list --format='csv(name,is_active,ACCOUNT,PROJECT)'";
+    $instructions="[A]CTIVATE`t[Q]UIT"
+    break
+  }
 }
 
 do {
@@ -82,7 +86,7 @@ do {
 
 if ($ResourceType -eq 'Compute' -and $Answer -match '^\d$') {
   # Number only, default action is ssh
-  $action = "s" # SSH
+  $action = 's' # SSH
   [int]$item = $Answer
 }
 elseif ($ResourceType -eq 'Compute' -and $Answer -match '^([a-z]\d$|q|t)$') {
@@ -105,6 +109,19 @@ elseif ($ResourceType -eq 'MIG' -and $answer -match '^([r]\d[\.=]\d)$') {
 elseif ($ResourceType -eq 'backend-services' -and $answer -match '^[p]\d$') {
   $action = $Answer[0]
   [int]$item = $Answer.Substring(1)    
+}
+elseif ($ResourceType -eq 'Configurations' -and $answer -match '^\d$') {
+  # Default action for Configurations
+  $action = 'a'
+  [int]$item = $Answer
+}
+elseif ($ResourceType -eq 'Configurations' -and $answer -match '^[a]\d$') {
+  $action = $Answer[0]
+  [int]$item = $Answer.Substring(1)    
+}
+elseif ($ResourceType -eq 'Configurations' -and $instances.Name -contains $answer) {
+  $action = 'a'
+  [int]$item = $instances | where Name -eq $answer | select -ExpandProperty Index
 }
 else {
   write-error "Unable to parse response."
@@ -149,6 +166,7 @@ switch -wildcard ("$ResourceType`:$action") {
   "Compute:ta" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }  
   "MIG:r" { $type="cmd"; $argListMid = "compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)"; break }
   "backend-services:p" { $type="inline"; $argListMid = "compute backend-services get-health $($sel.name) --region=$($sel.region) --format='table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label='zone',status.healthStatus.ipAddress,status.healthStatus.healthState)' --flatten='status.healthStatus'"; break }
+  "Configurations:a" {  $type="inline"; $argListMid = "config configurations activate $($sel.name)"; break }
   default { $Raise_Error = "No action defined for ``$ResourceType`:$action``" ; Throw $Raise_Error }
 }
 
