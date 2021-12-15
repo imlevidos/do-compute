@@ -38,7 +38,7 @@ switch ($ResourceType) {
   }
   "MIG" { 
     $outputCmd="gcloud compute instance-groups managed list --format='csv(name,LOCATION,size)'";
-    $instructions="[R#=#]ESIZE`t[Q]UIT"
+    $instructions="[R#=#]ESIZE`t[D]ESCRIBE`t[U]PDATE`t[Q]UIT"
     break 
   }
   "backend-services" {
@@ -84,19 +84,19 @@ do {
 } while ([string]::IsNullOrEmpty($Answer))
 
 
-if ($ResourceType -eq 'Compute' -and $Answer -match '^\d$') {
+if ($ResourceType -eq 'Compute' -and $Answer -match '^\d+$') {
   # Number only, default action is ssh
   $action = 's' # SSH
   [int]$item = $Answer
 }
-elseif ($ResourceType -eq 'Compute' -and $Answer -match '^([a-z]\d$|q|t)$') {
+elseif ($ResourceType -eq 'Compute' -and $Answer -match '^([a-z]\d+|q|t)$') {
   $action = $Answer[0]
   [int]$item = $Answer.Substring(1)
 }
 elseif ($ResourceType -eq 'MIG' -and $answer -match '^[q]$') {
   $action = $Answer[0]
 }
-elseif ($ResourceType -eq 'MIG' -and $answer -match '^[p]\d$') {
+elseif ($ResourceType -eq 'MIG' -and $answer -match '^[pdu]\d+$') {
   $action = $Answer[0]
   [int]$item = $Answer.Substring(1)  
 }
@@ -110,18 +110,18 @@ elseif ($ResourceType -eq 'backend-services' -and $answer -match '^[p]\d$') {
   $action = $Answer[0]
   [int]$item = $Answer.Substring(1)    
 }
-elseif ($ResourceType -eq 'Configurations' -and $answer -match '^\d$') {
+elseif ($ResourceType -eq 'Configurations' -and $answer -match '^\d+$') {
   # Default action for Configurations
   $action = 'a'
   [int]$item = $Answer
 }
-elseif ($ResourceType -eq 'Configurations' -and $answer -match '^[a]\d$') {
+elseif ($ResourceType -eq 'Configurations' -and $answer -match '^[a]\d+$') {
   $action = $Answer[0]
   [int]$item = $Answer.Substring(1)    
 }
 elseif ($ResourceType -eq 'Configurations' -and $instances.Name -contains $answer) {
   $action = 'a'
-  [int]$item = $instances | where Name -eq $answer | select -ExpandProperty Index
+  [int]$item = $instances | Where-Object Name -eq $answer | Select-Object -ExpandProperty Index
 }
 else {
   write-error "Unable to parse response."
@@ -165,6 +165,8 @@ switch -wildcard ("$ResourceType`:$action") {
   "Compute:t" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance AND resource.labels.instance_id=$($sel.id)`" --format=`"value(format('$($sel.name):{0}',json_payload.message).sub(':startup-script:',':'))`""; break }
   "Compute:ta" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }  
   "MIG:r" { $type="cmd"; $argListMid = "compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)"; break }
+  "MIG:u" { $type="cmd"; $argListMid = "compute instance-groups managed rolling-action replace $($sel.name) --region=$($sel.location)"; break }
+  "MIG:d" { $type="inline"; $argListMid = "compute instance-groups managed describe $($sel.name) --region=$($sel.location)"; break }
   "backend-services:p" { $type="inline"; $argListMid = "compute backend-services get-health $($sel.name) --region=$($sel.region) --format='table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label='zone',status.healthStatus.ipAddress,status.healthStatus.healthState)' --flatten='status.healthStatus'"; break }
   "Configurations:a" {  $type="inline"; $argListMid = "config configurations activate $($sel.name)"; break }
   default { $Raise_Error = "No action defined for ``$ResourceType`:$action``" ; Throw $Raise_Error }
