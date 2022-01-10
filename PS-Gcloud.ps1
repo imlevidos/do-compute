@@ -34,16 +34,17 @@ switch ($ResourceType) {
   "Compute" { 
     $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers),id)'"; 
     $instructions="[S]SH`t[O]UTPUT:serial-port `t[L]OG:start-up `t[T]AIL:start-up `t[U]PDATE:instance-template`t[R]ESET`t[D]ESCRIBE`t[Q]UIT"
+    $transform='Sort-Object -Property tmpregion,created-by,name'
     break 
   }
   "MIG" { 
-    $outputCmd="gcloud compute instance-groups managed list --format='csv(name,LOCATION,size)'";
-    $instructions="[R#=#]ESIZE`t[D]ESCRIBE`t[U]PDATE`t[Q]UIT"
+    $outputCmd="gcloud compute instance-groups managed list --format='csv(name,LOCATION,size,autoHealingPolicies[0].healthCheck.scope(healthChecks):label='autoheal_hc')'";
+    $instructions="[R#=#]ESIZE`t[D]ESCRIBE`t[U]PDATE`t[C]LEAR-AUTOHEALING`t[Q]UIT"
     break 
   }
   "backend-services" {
     $outputCmd="gcloud compute backend-services list --format='csv(name,region.scope(regions),backends[0].group.scope(instanceGroups))'";
-    $instructions="[P]OOL:list`t[Q]UIT"
+    $instructions="[P]OOL:list`t[D]ESCRIBE`t[Q]UIT"
     break 
   }
   "Configurations" {
@@ -55,6 +56,7 @@ switch ($ResourceType) {
 
 do {
   $output=$(Invoke-Expression $outputCmd)
+  $outputTmp=ConvertFrom-Csv -InputObject $output
 
   if ($output.Count -eq 0) {
     $Raise_Error = "No $($ResourceType.ToLower()) instances found in GCP project."
@@ -63,77 +65,45 @@ do {
 
   for ($i=0; $i -lt $output.Count; $i++) {
     if ($i -eq 0) {
-      # Add index column to object
-      $output[$i]="index,$($output[$i])"
+      # Append additional columns to object
+      $output[$i]="$($output[$i]),tmpregion"
     }
     else {
-      $output[$i]="$i,$($output[$i])"
+      $region=$outputTmp[$i-1].Zone -replace ".{2}$"
+      $output[$i]="$($output[$i]),$region"
     }
   }
 
-  $instances=ConvertFrom-Csv -InputObject $output
-  $outText=($instances | Format-Table | Out-String).Replace("`r`n`r`n", "")
+  $instances = ConvertFrom-Csv -InputObject $output
 
-  if ([string]::IsNullOrEmpty($Answer)) {    
+  if($transform) {
+    $instances = Invoke-Expression "`$instances | $transform"
+  }
+
+  $outText=($instances | Select-Object * -ExcludeProperty tmp* | ForEach-Object {$index=1} {$_; $index++} | Format-Table -Property @{ Label='index';Expression={$index}; },* | Out-String).Replace("`r`n`r`n", "")
+
+  if ([string]::IsNullOrEmpty($Answer) -or $Answer -eq 'q') {    
     Write-Host $outText
     Write-Host $instructions
+  }
 
+  if ([string]::IsNullOrEmpty($Answer)) {    
     $Answer = Read-Host `n'Enter selection'
   }
 
 } while ([string]::IsNullOrEmpty($Answer))
 
+$Answers = Select-String -InputObject $Answer -Pattern '([a-z]{1,2})?(\d+)?=?([\da-z\-]+)?' | select -ExpandProperty Matches | select -ExpandProperty Groups | select -ExpandProperty Value
+$Action = $Answers[1]
+$Item = $Answers[2]
+$Param = $Answers[3]
 
-if ($ResourceType -eq 'Compute' -and $Answer -match '^\d+$') {
-  # Number only, default action is ssh
-  $action = 's' # SSH
-  [int]$item = $Answer
-}
-elseif ($ResourceType -eq 'Compute' -and $Answer -match '^([a-z]\d+|q|t)$') {
-  $action = $Answer[0]
-  [int]$item = $Answer.Substring(1)
-}
-elseif ($ResourceType -eq 'MIG' -and $answer -match '^[q]$') {
-  $action = $Answer[0]
-}
-elseif ($ResourceType -eq 'MIG' -and $answer -match '^[pdu]\d+$') {
-  $action = $Answer[0]
-  [int]$item = $Answer.Substring(1)  
-}
-elseif ($ResourceType -eq 'MIG' -and $answer -match '^([r]\d[\.=]\d)$') {
-  $action = $Answer[0]
-  [int]$item = $Answer.Substring(1,1)
-  [int]$param = $Answer.Substring(3,1)  
-  Write-Host "item:$item, param:$param"
-}
-elseif ($ResourceType -eq 'backend-services' -and $answer -match '^[p]\d$') {
-  $action = $Answer[0]
-  [int]$item = $Answer.Substring(1)    
-}
-elseif ($ResourceType -eq 'Configurations' -and $answer -match '^\d+$') {
-  # Default action for Configurations
-  $action = 'a'
-  [int]$item = $Answer
-}
-elseif ($ResourceType -eq 'Configurations' -and $answer -match '^[a]\d+$') {
-  $action = $Answer[0]
-  [int]$item = $Answer.Substring(1)    
-}
-elseif ($ResourceType -eq 'Configurations' -and $instances.Name -contains $answer) {
+if ($ResourceType -eq 'Configurations' -and $instances.Name -contains $answer) {
   $action = 'a'
   [int]$item = $instances | Where-Object Name -eq $answer | Select-Object -ExpandProperty Index
 }
-else {
-  write-error "Unable to parse response."
-  exit
-}
 
-switch ($answer) {
-  'q' { exit }
-  't' { $action = 'ta' } # Tail all
-}
-
-if ($item -gt 0) {
+if ([int]$Item -gt 0) {
   $sel = $instances[$item-1] # Selection
   Write-Host "Your selection: $sel`n"
 }
@@ -154,9 +124,9 @@ if ($UseInternalIpSsh) {
   $UseInternalIpCmd="--internal-ip"
 }
 
-switch -wildcard ("$ResourceType`:$action") {
-  "*:q" { exit; break }
-  "Compute:s" { $type="hcmd"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name)"; break }
+switch -regex ("$ResourceType`:$action") {
+  ".*:q$" { exit; break }
+  "Compute:s?$" { $type="hcmd"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name)"; break }
   "Compute:u" { $type="cmd"; $argListMid = "compute instance-groups managed update-instances --region=$($sel.zone -replace '..$') --minimal-action=replace $($sel.'created-by') --instances=$($sel.name)"; break }
   "Compute:r" { $type="cmd"; $argListMid = "compute instances reset --zone=$($sel.zone) $($sel.name)"; break }
   "Compute:o" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"; break }
@@ -166,12 +136,12 @@ switch -wildcard ("$ResourceType`:$action") {
   "Compute:ta" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }  
   "MIG:r" { $type="cmd"; $argListMid = "compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)"; break }
   "MIG:u" { $type="cmd"; $argListMid = "compute instance-groups managed rolling-action replace $($sel.name) --region=$($sel.location)"; break }
+  "MIG:c" { $type="cmd"; $argListMid = "compute instance-groups managed update --clear-autohealing  $($sel.name) --region=$($sel.location)"; break }
   "MIG:d" { $type="inline"; $argListMid = "compute instance-groups managed describe $($sel.name) --region=$($sel.location)"; break }
-  "backend-services:p" { $type="inline"; $argListMid = "compute backend-services get-health $($sel.name) --region=$($sel.region) --format='table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label='zone',status.healthStatus.ipAddress,status.healthStatus.healthState)' --flatten='status.healthStatus'"; break }
-  "Configurations:a" {  $type="inline"; $argListMid = "config configurations activate $($sel.name)"; break }
+  "backend-services:p?$" { $type="inline"; $argListMid = "compute backend-services get-health $($sel.name) --region=$($sel.region) --format='table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label='zone',status.healthStatus.ipAddress,status.healthStatus.healthState)' --flatten='status.healthStatus'"; break }
+  "Configurations:a?$" {  $type="inline"; $argListMid = "config configurations activate $($sel.name)"; break }
   default { $Raise_Error = "No action defined for ``$ResourceType`:$action``" ; Throw $Raise_Error }
 }
-
 
 
 $HAVE_CONEMU=$true # TBC - Add conemu detection
