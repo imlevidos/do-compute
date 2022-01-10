@@ -1,5 +1,5 @@
 param(
-  [Parameter()][ValidateSet('Compute','Configurations','MIG','backend-services')][string[]]$ResourceType = 'Compute',
+  [Parameter()][ValidateSet('Compute','Configurations','MIG','backend-services','SQL')][string[]]$ResourceType = 'Compute',
   [nullable[bool]]$UseInternalIpSsh,
   [Parameter(Position=0)][string]$Answer,
   [Switch]$Install,
@@ -50,6 +50,11 @@ switch ($ResourceType) {
   "Configurations" {
     $outputCmd="gcloud config configurations list --format='csv(name,is_active,ACCOUNT,PROJECT)'";
     $instructions="[A]CTIVATE`t[Q]UIT"
+    break
+  }
+  "SQL" {
+    $outputCmd="gcloud sql instances list --format='csv(name,database_version,gceZone:label='location',settings.availabilityType,settings.tier,ipAddresses[0].ipAddress,state,settings.dataDiskType,settings.dataDiskSizeGb)'";
+    $instructions="[B]ACKUP`t[L]IST-BACKUPS`t[Q]UIT"
     break
   }
 }
@@ -138,6 +143,8 @@ switch -regex ("$ResourceType`:$action") {
   "MIG:u" { $type="cmd"; $argListMid = "compute instance-groups managed rolling-action replace $($sel.name) --region=$($sel.location)"; break }
   "MIG:c" { $type="cmd"; $argListMid = "compute instance-groups managed update --clear-autohealing  $($sel.name) --region=$($sel.location)"; break }
   "MIG:d" { $type="inline"; $argListMid = "compute instance-groups managed describe $($sel.name) --region=$($sel.location)"; break }
+  "SQL:l" { $type="inline"; $argListMid = "sql backups list --instance=$($sel.name)"; break }
+  "SQL:b" { $type="inline"; $argListMid = "sql backups create --instance=$($sel.name)"; break }
   "backend-services:p?$" { $type="inline"; $argListMid = "compute backend-services get-health $($sel.name) --region=$($sel.region) --format='table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label='zone',status.healthStatus.ipAddress,status.healthStatus.healthState)' --flatten='status.healthStatus'"; break }
   "Configurations:a?$" {  $type="inline"; $argListMid = "config configurations activate $($sel.name)"; break }
   default { $Raise_Error = "No action defined for ``$ResourceType`:$action``" ; Throw $Raise_Error }
