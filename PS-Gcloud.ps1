@@ -33,7 +33,7 @@ if ($Install -eq $true) {
 switch ($ResourceType) {
   "Compute" { 
     $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers),id)'"; 
-    $instructions="[S]SH`t[O]UTPUT:serial-port `t[L]OG:start-up `t[T]AIL:start-up `t[U]PDATE:instance-template`t[R]ESET`t[D]ESCRIBE`t[Q]UIT"
+    $instructions="[S]SH`t[O]UTPUT:serial-port `t[L]OG:start-up `t[T]AIL:start-up `t[U]PDATE:instance-template`t[R]ESET`t[P]OWER-OFF`t[D]ESCRIBE`t[Q]UIT"
     $transform='Sort-Object -Property tmpregion,created-by,name'
     break 
   }
@@ -134,6 +134,7 @@ switch -regex ("$ResourceType`:$action") {
   "Compute:s?$" { $type="hcmd"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name)"; break }
   "Compute:u" { $type="cmd"; $argListMid = "compute instance-groups managed update-instances --region=$($sel.zone -replace '..$') --minimal-action=replace $($sel.'created-by') --instances=$($sel.name)"; break }
   "Compute:r" { $type="cmd"; $argListMid = "compute instances reset --zone=$($sel.zone) $($sel.name)"; break }
+  "Compute:p" { $type="cmd"; $argListMid = "compute instances stop --zone=$($sel.zone) $($sel.name)"; break }
   "Compute:o" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"; break }
   "Compute:l" { $type="log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name) | grep startup-script"; break }
   "Compute:d" { $type="inline"; $argListMid = "compute instances describe --zone=$($sel.zone) $($sel.name)"; break }
@@ -146,6 +147,7 @@ switch -regex ("$ResourceType`:$action") {
   "SQL:l" { $type="inline"; $argListMid = "sql backups list --instance=$($sel.name)"; break }
   "SQL:b" { $type="inline"; $argListMid = "sql backups create --instance=$($sel.name)"; break }
   "backend-services:p?$" { $type="inline"; $argListMid = "compute backend-services get-health $($sel.name) --region=$($sel.region) --format='table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label='zone',status.healthStatus.ipAddress,status.healthStatus.healthState)' --flatten='status.healthStatus'"; break }
+  "backend-services:d$" { $type="inline"; $argListMid = "compute backend-services describe $($sel.name) --region=$($sel.region) --format=yaml"; break }
   "Configurations:a?$" {  $type="inline"; $argListMid = "config configurations activate $($sel.name)"; break }
   default { $Raise_Error = "No action defined for ``$ResourceType`:$action``" ; Throw $Raise_Error }
 }
