@@ -1,11 +1,33 @@
 param(
-  [Parameter()][ValidateSet('Compute','Configurations','Disks','MIG','backend-services','Snapshots','SQL')][string[]]$ResourceType = 'Compute',
+  [Parameter()][ValidateSet('Compute','Configurations','Disks','MIG','Backend-Services','Snapshots','SQL')][string[]]$ResourceType,
   [nullable[bool]]$UseInternalIpSsh,
   [Parameter(Position=0)][string]$Answer,
   [Switch]$Install,
   [Switch]${Show-Command},
-  [Switch]${ReturnAs-Object}
+  [Switch]${ReturnAs-Object},
+  [Switch]$Compute,
+  [Switch]$Configurations,
+  [Switch]$Disks,
+  [Switch]$MIG,
+  [Switch]${Backend-Services},
+  [Switch]$Snapshots,
+  [Switch]$SQL
 )
+
+$ResourceTypes = @( 'Compute', 'Configurations','Disks','MIG','Backend-Services','Snapshots','SQL')
+
+if ($ResourceType -eq $null) {
+  foreach ($rt in $ResourceTypes) {
+    $rtval = Invoke-Expression "`${$rt}"
+    if ($rtval -eq $true) {
+      $ResourceType=$rt
+      break
+    }
+  }
+  if ($ResourceType -eq $null) {
+    $ResourceType = $ResourceTypes[0] # Default
+  }
+}
 
 $Sel=$null
 
@@ -70,7 +92,7 @@ switch ($ResourceType) {
   }
   "SQL" {
     $outputCmd="gcloud sql instances list --format='csv(name,database_version,gceZone:label='location',settings.availabilityType,settings.tier,ipAddresses[0].ipAddress,state,settings.dataDiskType:label=disk_type,settings.dataDiskSizeGb:label=disk_size,region:label=tmpregion,createTime.date(%Y-%m-%d %H:%M:%S):sort=1)'";
-    $instructions="[B]ACKUP`t[L]IST-BACKUPS`t[Q]UIT"
+    $instructions="[B]ACKUP`t[L]IST-BACKUPS`t[R#=backup-id]ESTORE`t[Q]UIT"
     break
   }
 }
@@ -252,6 +274,7 @@ foreach ($sel in $sel) {
     "Snapshots:d" { $type="inline"; $argListMid = "compute snapshots describe $($sel.name)"; break }
     "SQL:l" { $type="inline"; $argListMid = "sql backups list --instance=$($sel.name)"; break }
     "SQL:b" { $type="inline"; $argListMid = "sql backups create --instance=$($sel.name)"; break }
+    "SQL:r" { $type="show-command"; $argListMid = "sql backups restore --restore-instance=$($sel.name)  $param"; ${Show-Command}=$true; break }
     "backend-services:p?$" { $type="inline"; $argListMid = "compute backend-services get-health $($sel.name) --region=$($sel.region) --format='table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label='zone',status.healthStatus.ipAddress,status.healthStatus.healthState)' --flatten='status.healthStatus'"; break }
     "backend-services:d$" { $type="inline"; $argListMid = "compute backend-services describe $($sel.name) --region=$($sel.region) --format=yaml"; break }
     "Configurations:a?$" {  $type="inline"; $argListMid = "config configurations activate $($sel.name)"; break }
