@@ -16,6 +16,7 @@ param(
 
 $ResourceTypes = @( 'Compute', 'Configurations','Disks','MIG','Backend-Services','Snapshots','SQL')
 
+# Alternative parameter validation
 if ($ResourceType -eq $null) {
   foreach ($rt in $ResourceTypes) {
     $rtval = Invoke-Expression "`${$rt}"
@@ -25,23 +26,36 @@ if ($ResourceType -eq $null) {
     }
   }
   if ($ResourceType -eq $null) {
-    $ResourceType = $ResourceTypes[0] # Default
+    $ResourceType = $ResourceTypes[0] # Default Resource Type is Compute
   }
 }
+
+function Get-EnvPathsArr {
+  Param([ValidateSet('User','Machine','All')]$Scope='All')
+
+  $Paths=@() 
+  if( @('Machine','All') -icontains $Scope) {
+    $Paths += `
+      [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine).Split(';',[System.StringSplitOptions]::RemoveEmptyEntries)
+  }
+ 
+  if( @('User','All') -icontains $Scope) {
+    $Paths += `
+      [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User).Split(';',[System.StringSplitOptions]::RemoveEmptyEntries)
+  }
+
+  return $Paths
+}
+
 
 $Sel=$null
 
 # $env:PATH="d:\src\do-compute;$env:path"
-if ($Install -eq $true) {
-  $existingPaths = `
-    [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User) + `
-    [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine) `
-    -split ';'
-
-  if ($existingPaths -notcontains $PSScriptRoot) {
+if ($Install -eq $true -and ![string]::IsNullOrEmpty($PSScriptRoot)) {
+  if (Get-EnvPathsArr('All') -notcontains $PSScriptRoot) {
     Write-Output 'INSTALL: Adding script location to %PATH% as user env var...'
 
-    [Environment]::SetEnvironmentVariable("Path", "$env:Path;$PSScriptRoot", [System.EnvironmentVariableTarget]::User)
+    [Environment]::SetEnvironmentVariable("Path", "$((Get-EnvPathsArr('User')) -join ';');$PSScriptRoot", [System.EnvironmentVariableTarget]::User)
   }
 
   if ($env:Path -split ';' -notcontains $PSScriptRoot) {
@@ -63,8 +77,8 @@ switch ($ResourceType) {
     break 
   }
   "Disks" { 
-    $outputCmd="gcloud compute disks list --format='csv(name,LOCATION:sort=1,LOCATION_SCOPE,SIZE_GB,TYPE,status,users[0].scope(instances),creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime)'";
-    $instructions="[D]ESCRIBE`t[S]NAPSHOT`t[Q]UIT"
+    $outputCmd="gcloud compute disks list --format='csv(name,LOCATION:sort=1,LOCATION_SCOPE,SIZE_GB,TYPE,status,users[0].scope(instances),users[0].scope(projects):label=tmpUser,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime,selfLink:label=tmpSelfLink)'";
+    $instructions="[D]ESCRIBE`t[S]NAPSHOT`tD[E]LETE`tDE[T]ACH`t[A#=vm]TTACH`t[Q]UIT"
     # $transform='Sort-Object -Property tmpregion,created-by,CreatedTime'
     break 
   }
@@ -157,8 +171,8 @@ if($sel -eq $null) {
  
   if ($Answers -ne $null) {
     $Action = $Answers[1]
-    $Item = $Answers[3]
-    $Param = $Answers[5]
+    $Item   = $Answers[3]
+    $Param  = $Answers[5]
 
     if([string]::IsNullOrEmpty($Item)) {
       $Raise_Error = "ERROR: No item selected." ; Throw $Raise_Error     
@@ -198,30 +212,6 @@ if($sel -eq $null) {
 if ($sel -eq $null) {
   $Raise_Error = "Unable to determine selection based on *$Answer*." ; Throw $Raise_Error     
 }
-
-# if ($Answers -eq $null) {
-# # Answer is a search string
-#   $result = $instances | where name -ilike "*$answer*"
-#   if(($result | measure).Count -eq 0) {
-#     $Raise_Error = "Filter *$answer* found no matching entries." ; Throw $Raise_Error     
-#   }
-#   elseif(($result | measure).Count -gt 1) {
-#     $Raise_Error = "Filter *$answer* matched multiple entries, pls narrow." ; Throw $Raise_Error     
-#   }
-#   else {
-#     # All good
-#   }
-# }
-# else {
-#   $Action = $Answers[1]
-#   $Item = $Answers[2]
-#   $Param = $Answers[3]  
-# }
-
-# if ($ResourceType -eq 'Configurations' -and $instances.Name -contains $answer) {
-#   $action = 'a'
-#   [int]$item = $instances | Where-Object Name -eq $answer | Select-Object -ExpandProperty Index
-# }
 
 if ($UseInternalIpSsh -eq $null) {
   # -UseInternalIpSsh switch not present, use proactive detection  
@@ -266,7 +256,10 @@ foreach ($sel in $sel) {
     # "Compute:t" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance AND resource.labels.instance_id=$($sel.id)`" --format=`"value(format('$($sel.name):{0}',json_payload.message).sub(':startup-script:',':'))`""; break }
     "Compute:ta" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }  
     "Disks:d" { $type="inline"; $argListMid = "compute disks describe --$($sel.location_scope)=$($sel.location) $($sel.name)"; break }
+    "Disks:e" { $type="inline"; $argListMid = "compute disks delete --$($sel.location_scope)=$($sel.location) $($sel.name)"; break }
     "Disks:s" { $type="cmd"; $argListMid = "compute disks snapshot --$($sel.location_scope)=$($sel.location) $($sel.name) --snapshot-names=ps-gcloud-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($sel.name)"; break }
+    "Disks:t" { $type="inline"; $argListMid = "compute instances detach-disk `"projects/$($sel.tmpUser)`" --$($sel.location_scope)=$($sel.location) `"--disk=$($sel.tmpSelfLink)`""; break }
+    "Disks:a" { $type="inline"; $argListMid = "compute instances attach-disk `"$($param)`" --disk-scope=$($sel.location_scope)al `"--disk=$($sel.tmpSelfLink)`""; break }
     "MIG:r" { $type="cmd"; $argListMid = "compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)"; break }
     "MIG:u" { $type="cmd"; $argListMid = "compute instance-groups managed rolling-action replace $($sel.name) --region=$($sel.location)"; break }
     "MIG:c" { $type="cmd"; $argListMid = "compute instance-groups managed update --clear-autohealing  $($sel.name) --region=$($sel.location)"; break }
