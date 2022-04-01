@@ -5,6 +5,7 @@ param(
   [Switch]$Install,
   [Switch]${Show-Command},
   [Switch]${ReturnAs-Object},
+  [Switch]${SelfLink},[Switch]${Uri},
   [Switch]$Compute,
   [Switch]$Configurations,
   [Switch]$Disks,
@@ -15,6 +16,7 @@ param(
 )
 
 $ResourceTypes = @( 'Compute', 'Configurations','Disks','MIG','Backend-Services','Snapshots','SQL')
+$SelfLink = $SelfLink -or $Uri
 
 # Alternative parameter validation
 if ($ResourceType -eq $null) {
@@ -69,27 +71,32 @@ if ($Install -eq $true -and ![string]::IsNullOrEmpty($PSScriptRoot)) {
   exit 0
 }
 
+$SelfLinkOpts = ''
+if($SelfLink -eq $true) {
+  $SelfLinkOpts = ',selfLink.scope(v1):label=self_link'
+}
+
 switch ($ResourceType) {
   "Compute" { 
-    $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers),id,networkInterfaces[0].subnetwork.scope(regions).segment(0):label=tmpregion,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime)'";
+    $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers),id,networkInterfaces[0].subnetwork.scope(regions).segment(0):label=tmpregion,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'";
     $instructions="[S]SH`tE[X#=cmd]ECUTE`t[C#=cmd]MD-INLINE`t[O]UTPUT-serial-log`t[T]AIL-STARTUP`t[U]PDATE-instance-template`t[R]ESET`t[P]OWER-OFF`t[D]ESCRIBE`t[Q]UIT"
     $transform='Sort-Object -Property tmpregion,created-by,CreatedTime'
     break 
   }
   "Disks" { 
-    $outputCmd="gcloud compute disks list --format='csv(name,LOCATION:sort=1,LOCATION_SCOPE,SIZE_GB,TYPE,status,users[0].scope(instances),users[0].scope(projects):label=tmpUser,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime,selfLink:label=tmpSelfLink)'";
+    $outputCmd="gcloud compute disks list --format='csv(name,LOCATION:sort=1,LOCATION_SCOPE:label=lscope,SIZE_GB,TYPE,status,users[0].scope(instances),users[0].scope(projects):label=tmpUser,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime,selfLink:label=tmpSelfLink${SelfLinkOpts})'";
     $instructions="[D]ESCRIBE`t[S]NAPSHOT`tD[E]LETE`tDE[T]ACH`t[A#=vm]TTACH`t[Q]UIT"
     # $transform='Sort-Object -Property tmpregion,created-by,CreatedTime'
     break 
   }
   "MIG" { 
-    $outputCmd="gcloud compute instance-groups managed list --format='csv(name,LOCATION,size,autoHealingPolicies[0].healthCheck.scope(healthChecks):label='autoheal_hc',creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime)'";
+    $outputCmd="gcloud compute instance-groups managed list --format='csv(name,LOCATION,size,autoHealingPolicies[0].healthCheck.scope(healthChecks):label='autoheal_hc',creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'";
     $instructions="[R#=#]ESIZE`t[D]ESCRIBE`t[U]PDATE`t[C]LEAR-AUTOHEALING`t[Q]UIT"
     $transform='Sort-Object -Property location,name'
     break 
   }
   "backend-services" {
-    $outputCmd="gcloud compute backend-services list --format='csv(name,region.scope(regions),backends[0].group.scope(instanceGroups),creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime)'";
+    $outputCmd="gcloud compute backend-services list --format='csv(name,region.scope(regions),backends[0].group.scope(instanceGroups),creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'";
     $instructions="[P]OOL:list`t[D]ESCRIBE`t[Q]UIT"
     break 
   }
@@ -99,35 +106,43 @@ switch ($ResourceType) {
     break
   }
   "Snapshots" { 
-    $outputCmd="gcloud compute snapshots list --format='csv(name,disk_size_gb,SRC_DISK,status,storageBytes,storageLocations,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime)'";
+    $outputCmd="gcloud compute snapshots list --format='csv(name,disk_size_gb,SRC_DISK,status,storageBytes,storageLocations,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'";
     $instructions="[D]ESCRIBE`t[Q]UIT"
     # $transform='Sort-Object -Property tmpregion,created-by,CreatedTime'
     break 
   }
   "SQL" {
-    $outputCmd="gcloud sql instances list --format='csv(name,database_version,gceZone:label='location',settings.availabilityType,settings.tier,ipAddresses[0].ipAddress,state,settings.dataDiskType:label=disk_type,settings.dataDiskSizeGb:label=disk_size,region:label=tmpregion,createTime.date(%Y-%m-%d %H:%M:%S):sort=1)'";
-    $instructions="[B]ACKUP`t[L]IST-BACKUPS`t[R#=backup-id]ESTORE`t[Q]UIT"
+    $outputCmd="gcloud sql instances list --format='csv(name:sort=1,database_version,gceZone:label='location',settings.availabilityType,settings.tier,ipAddresses[0].ipAddress,state,settings.dataDiskType:label=disk_type,settings.dataDiskSizeGb:label=disk_size,region:label=tmpregion,createTime.date(%Y-%m-%d %H:%M:%S)$SelfLinkOpts)'";
+    $instructions="[B]ACKUP`t[L]IST-BACKUPS`t[R#=backup-id]ESTORE`t[S]TART/S[T]OP`tD[E]LETE`t[Q]UIT"
+    $transform='Sort-Object -Property name'
     break
   }
 }
 
 do {
-  $output=$(Invoke-Expression $outputCmd)
+  $output = $(Invoke-Expression $outputCmd)
   if($LASTEXITCODE -ne 0) {
     $Raise_Error = "Error running gcloud command"; Throw $Raise_Error
   }
 
-  $outputTmp=ConvertFrom-Csv -InputObject $output
-  if ($outputTmp.Count -eq 0) {
-    $Raise_Error = "No $($ResourceType.ToLower()) instances found in GCP project."; Throw $Raise_Error
+  if ($output -ne $null) {
+    $instances = ConvertFrom-Csv -InputObject $output -ErrorAction SilentlyContinue
+  }
+  else {
+    $Raise_Error = "ERROR: No $($ResourceType.ToUpper()) instances found in GCP project."; Throw $Raise_Error
   }
 
-  $instances = ConvertFrom-Csv -InputObject $output
+  if (Get-Member -InputObject $instances[0] -name "external_ip" -MemberType Properties) {
+    if (($instances.external_ip | Group-Object -AsHashTable -AsString)[''].Count -eq $instances.Count) {
+      $instances = $instances | Select-Object  -Property * -ExcludeProperty external_ip
+    }
+  }
+
   if($transform) {
     $instances = Invoke-Expression "`$instances | $transform"
   }
 
-  $outText=($instances | Select-Object * -ExcludeProperty tmp* | ForEach-Object {$index=1} {$_; $index++} | Format-Table -Property @{ Label='index';Expression={$index}; },* | Out-String).Replace("`r`n`r`n", "")
+  $outText=($instances | Select-Object * -ExcludeProperty tmp* | ForEach-Object {$index=1} {$_; $index++} | Format-Table -Property @{ Label='index';Expression={$index}; },* -Wrap | Out-String).Replace("`r`n`r`n", "")
 
   if (${ReturnAs-Object} -eq $true) {
     return $instances
@@ -255,11 +270,11 @@ foreach ($sel in $sel) {
     "Compute:d" { $type="inline"; $argListMid = "compute instances describe --zone=$($sel.zone) $($sel.name)"; break }
     # "Compute:t" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance AND resource.labels.instance_id=$($sel.id)`" --format=`"value(format('$($sel.name):{0}',json_payload.message).sub(':startup-script:',':'))`""; break }
     "Compute:ta" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }  
-    "Disks:d" { $type="inline"; $argListMid = "compute disks describe --$($sel.location_scope)=$($sel.location) $($sel.name)"; break }
-    "Disks:e" { $type="inline"; $argListMid = "compute disks delete --$($sel.location_scope)=$($sel.location) $($sel.name)"; break }
-    "Disks:s" { $type="cmd"; $argListMid = "compute disks snapshot --$($sel.location_scope)=$($sel.location) $($sel.name) --snapshot-names=ps-gcloud-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($sel.name)"; break }
-    "Disks:t" { $type="inline"; $argListMid = "compute instances detach-disk `"projects/$($sel.tmpUser)`" --$($sel.location_scope)=$($sel.location) `"--disk=$($sel.tmpSelfLink)`""; break }
-    "Disks:a" { $type="inline"; $argListMid = "compute instances attach-disk `"$($param)`" --disk-scope=$($sel.location_scope)al `"--disk=$($sel.tmpSelfLink)`""; break }
+    "Disks:d" { $type="inline"; $argListMid = "compute disks describe --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
+    "Disks:e" { $type="inline"; $argListMid = "compute disks delete --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
+    "Disks:s" { $type="cmd"; $argListMid = "compute disks snapshot --$($sel.lscope)=$($sel.location) $($sel.name) --snapshot-names=ps-gcloud-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($sel.name)"; break }
+    "Disks:t" { $type="inline"; $argListMid = "compute instances detach-disk `"projects/$($sel.tmpUser)`" --$($sel.lscope)=$($sel.location) `"--disk=$($sel.tmpSelfLink)`""; break }
+    "Disks:a" { $type="inline"; $argListMid = "compute instances attach-disk `"$($param)`" --disk-scope=$($sel.lscope)al `"--disk=$($sel.tmpSelfLink)`""; break }
     "MIG:r" { $type="cmd"; $argListMid = "compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)"; break }
     "MIG:u" { $type="cmd"; $argListMid = "compute instance-groups managed rolling-action replace $($sel.name) --region=$($sel.location)"; break }
     "MIG:c" { $type="cmd"; $argListMid = "compute instance-groups managed update --clear-autohealing  $($sel.name) --region=$($sel.location)"; break }
@@ -267,7 +282,10 @@ foreach ($sel in $sel) {
     "Snapshots:d" { $type="inline"; $argListMid = "compute snapshots describe $($sel.name)"; break }
     "SQL:l" { $type="inline"; $argListMid = "sql backups list --instance=$($sel.name)"; break }
     "SQL:b" { $type="inline"; $argListMid = "sql backups create --instance=$($sel.name)"; break }
+    "SQL:s" { $type="cmd"; $argListMid = "sql instances patch $($sel.name) --activation-policy=ALWAYS "; break }
+    "SQL:t" { $type="cmd"; $argListMid = "sql instances patch $($sel.name) --activation-policy=NEVER "; break }
     "SQL:r" { $type="show-command"; $argListMid = "sql backups restore --restore-instance=$($sel.name)  $param"; ${Show-Command}=$true; break }
+    "SQL:e" { $type="inline"; $argListMid = "sql instances delete $($sel.name) "; break }
     "backend-services:p?$" { $type="inline"; $argListMid = "compute backend-services get-health $($sel.name) --region=$($sel.region) --format='table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label='zone',status.healthStatus.ipAddress,status.healthStatus.healthState)' --flatten='status.healthStatus'"; break }
     "backend-services:d$" { $type="inline"; $argListMid = "compute backend-services describe $($sel.name) --region=$($sel.region) --format=yaml"; break }
     "Configurations:a?$" {  $type="inline"; $argListMid = "config configurations activate $($sel.name)"; break }
