@@ -79,7 +79,7 @@ if($SelfLink -eq $true) {
 switch ($ResourceType) {
   "Compute" { 
     $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers),id,networkInterfaces[0].subnetwork.scope(regions).segment(0):label=tmpregion,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'";
-    $instructions="[S]SH`tE[X#=cmd]ECUTE`t[C#=cmd]MD-INLINE`t[O]UTPUT-serial-log`t[T]AIL-STARTUP`t[U]PDATE-instance-template`t[R]ESET`t[P]OWER-OFF`t[D]ESCRIBE`t[Q]UIT"
+    $instructions="[S]SH`tE[X#=`"cmd`"]ECUTE`t[C#=`"cmd`"]MD-INLINE`t[O]UTPUT-serial-log`t[T]AIL-STARTUP`t[U]PDATE-instance-template`t[R]ESET`t[P]OWER-OFF`t[D]ESCRIBE`t[Q]UIT"
     $transform='Sort-Object -Property tmpregion,created-by,CreatedTime'
     break 
   }
@@ -306,7 +306,7 @@ foreach ($sel in $sel) {
     $SleepCmd = ""
   }
   elseif ($type -eq "inline") {
-    $shellParams = ""
+    $shellParams = "/c"
     $SleepCmd = ""
   }
   elseif ($type -eq "hcmd") {
@@ -327,7 +327,8 @@ foreach ($sel in $sel) {
     Write-Host "$argList"
   }
   elseif ($type -eq "inline") {
-    Invoke-Expression "& $argList"
+    # Invoke-Expression "& $argList"
+    Start-Process $shell -ArgumentList "$argList " -NoNewWindow -Wait
     Write-Host ''
   }
   else {

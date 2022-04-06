@@ -47,9 +47,21 @@ $migs = ConvertFrom-Csv -InputObject $output
 Write-Output $migs
 
 foreach($mig in $migs | where size -gt 0 ) {
+  Write-Output "Processing $($mig.name)..."
   if ($mig.autoscaled -eq 'yes') {
     gcloud compute instance-groups managed stop-autoscaling $($mig.name) --region=$($mig.location) 
   }
 
   gcloud compute instance-groups managed resize $($mig.name) --region=$($mig.location) --size=0
+}
+
+Write-Output "Looking up SQL Instances..."
+
+$outputCmd = "gcloud sql instances list  '--format=csv(name,database_version,LOCATION,TIER,PRIVATE_ADDRESS,STATUS)' --filter='STATUS=RUNNABLE' ";
+$output = $(Invoke-Expression $outputCmd)
+$instances = ConvertFrom-Csv -InputObject $output
+
+foreach ($i in $instances) {
+  Write-Output "Processing $($i.name)..."
+  gcloud sql instances patch $($i.name) --activation-policy=NEVER
 }
