@@ -273,8 +273,8 @@ foreach ($sel in $sel) {
     "Disks:d" { $type="inline"; $argListMid = "compute disks describe --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
     "Disks:e" { $type="inline"; $argListMid = "compute disks delete --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
     "Disks:s" { $type="cmd"; $argListMid = "compute disks snapshot --$($sel.lscope)=$($sel.location) $($sel.name) --snapshot-names=ps-gcloud-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($sel.name)"; break }
-    "Disks:t" { $type="inline"; $argListMid = "compute instances detach-disk `"projects/$($sel.tmpUser)`" --$($sel.lscope)=$($sel.location) `"--disk=$($sel.tmpSelfLink)`""; break }
-    "Disks:a" { $type="inline"; $argListMid = "compute instances attach-disk `"$($param)`" --disk-scope=$($sel.lscope)al `"--disk=$($sel.tmpSelfLink)`""; break }
+    "Disks:t" { $type="inline"; switch ( $sel.lscope ) { region { $dscope = 'regional' }; zone { $dscope = 'zonal' }; default  { $Raise_Error = "Unexpected Location Scope $($sel.lscope)." ; Throw $Raise_Error } }; $argListMid = "compute instances detach-disk `"projects/$($sel.tmpUser)`" --disk-scope=$dscope `"--disk=$($sel.tmpSelfLink)`""; break }
+    "Disks:a" { $type="inline"; switch ( $sel.lscope ) { region { $dscope = 'regional' }; zone { $dscope = 'zonal' }; default  { $Raise_Error = "Unexpected Location Scope $($sel.lscope)." ; Throw $Raise_Error } }; $argListMid = "compute instances attach-disk `"$($param)`" --disk-scope=$dscope `"--disk=$($sel.tmpSelfLink)`""; break }
     "MIG:r" { $type="cmd"; $argListMid = "compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)"; break }
     "MIG:u" { $type="cmd"; $argListMid = "compute instance-groups managed rolling-action replace $($sel.name) --region=$($sel.location)"; break }
     "MIG:c" { $type="cmd"; $argListMid = "compute instance-groups managed update --clear-autohealing  $($sel.name) --region=$($sel.location)"; break }
