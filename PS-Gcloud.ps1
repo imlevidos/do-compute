@@ -164,9 +164,9 @@ do {
 } while ([string]::IsNullOrEmpty($Answer))
 
 
-if($sel -eq $null) {
+if ($sel -eq $null) {
   # Lookup phase 0 - gcloud config configurations shortcut
-  if ($ResourceType -eq 'Configurations') {
+  if ($ResourceType -eq 'Configurations' -and $Answer -notmatch '^\d+$' ) {
     $sel = $instances | where name -like "*$Answer*"
     $action = 'a'
 
@@ -179,7 +179,7 @@ if($sel -eq $null) {
   }
 }
 
-if($sel -eq $null) {
+if ($sel -eq $null) {
   # Lookup phase 1
   $Answers = Select-String -InputObject $Answer -Pattern '^([a-z]{1})?((\d{1,3}))?(=(.+))?$' | select -ExpandProperty Matches | select -ExpandProperty Groups | select -ExpandProperty Value
 
@@ -198,7 +198,7 @@ if($sel -eq $null) {
   }
 }
 
-if($sel -eq $null) {
+if ($sel -eq $null) {
   # Lookup phase 2
   $Answers = Select-String -InputObject $Answer -Pattern '^([a-z]{1})?(:([\da-z\-\*]+))?(=(.+))?$' | select -ExpandProperty Matches | select -ExpandProperty Groups | select -ExpandProperty Value
 
@@ -244,7 +244,7 @@ if ($UseInternalIpSsh) {
   $UseInternalIpCmd="--internal-ip"
 }
 
-$selCount=$sel.Count
+$selCount = $sel.Count
 if($selCount -gt 1 -and ${Show-Command} -eq $false) {
   $YesNo = Read-Host "WARNING: Execute on multiple targets? (yes/no)"
   Write-Host ""
