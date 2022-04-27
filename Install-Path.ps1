@@ -6,18 +6,27 @@ param(
 $actionVerb = ''
 $installPaths = @(
   "$PSScriptRoot",
-  "$PSScriptRoot\sysinternals",
-  "$PSScriptRoot\Hashicorp",
-  "$PSScriptRoot\google-cloud-sdk\bin",
-  "$PSScriptRoot\Notepad++",
-  "$PSScriptRoot\PuTTY",
-  "$PSScriptRoot\GitBashPortable",
-  "$PSScriptRoot\GitBashPortable\bin",
-  "$PSScriptRoot\GitBashPortable\mingw64\bin",
-  "$PSScriptRoot\GitBashPortable\usr\bin",
-	"$PSScriptRoot\ffmpeg\bin"
+  "$PSScriptRoot\..\sysinternals",
+  "$PSScriptRoot\..\Go\bin",
+  "$PSScriptRoot\..\google-cloud-sdk\google-cloud-sdk\bin",
+	"$PSScriptRoot\..\istio-1.13.3\bin\"
 )
 
+$resolvedPaths = @()
+
+foreach ($p in $installPaths) {
+	$rp = $null
+	try {
+		$rp = $( resolve-path $p ).Path
+	}
+	catch {
+	}
+	if ($rp) {
+		$resolvedPaths += $rp
+	}
+}
+
+$installPaths = $resolvedPaths
 
 function Get-EnvPathsArr {
 	Param(

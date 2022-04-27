@@ -1,5 +1,5 @@
 param(
-  [Parameter()][ValidateSet('Compute','Configurations','Disks','MIG','Backend-Services','Snapshots','SQL')][string[]]$ResourceType,
+  [Parameter()][ValidateSet('Compute','Configurations','Container','Disks','MIG','Backend-Services','Snapshots','SQL')][string[]]$ResourceType,
   [nullable[bool]]$UseInternalIpSsh,
   [Parameter(Position=0)][string]$Answer,
   [Switch]$Install,
@@ -8,6 +8,7 @@ param(
   [Switch]${SelfLink},[Switch]${Uri},
   [Switch]$Compute,
   [Switch]$Configurations,
+  [Switch]$Container,
   [Switch]$Disks,
   [Switch]$MIG,
   [Switch]${Backend-Services},
@@ -15,7 +16,7 @@ param(
   [Switch]$SQL
 )
 
-$ResourceTypes = @( 'Compute', 'Configurations','Disks','MIG','Backend-Services','Snapshots','SQL')
+$ResourceTypes = @( 'Compute', 'Configurations', 'Container', 'Disks', 'MIG', 'Backend-Services', 'Snapshots', 'SQL')
 $SelfLink = $SelfLink -or $Uri
 
 # Alternative parameter validation
@@ -83,10 +84,14 @@ switch ($ResourceType) {
     $transform='Sort-Object -Property tmpregion,created-by,CreatedTime'
     break 
   }
+  "Container" { 
+    $outputCmd="gcloud container clusters list --format='csv(name,zone,MACHINE_TYPE,MASTER_IP,MASTER_VERSION,NODE_VERSION,NUM_NODES,STATUS,createTime.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'";
+    $instructions="[P]OOL:list`t[D]ESCRIBE`t[G]ET-CREDENTIAL`tD[E]LETE`t[Q]UIT"
+    break 
+  }  
   "Disks" { 
     $outputCmd="gcloud compute disks list --format='csv(name,LOCATION:sort=1,LOCATION_SCOPE:label=lscope,SIZE_GB,TYPE,status,users[0].scope(instances),users[0].scope(projects):label=tmpUser,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime,selfLink:label=tmpSelfLink${SelfLinkOpts})'";
     $instructions="[D]ESCRIBE`t[S]NAPSHOT`tD[E]LETE`tDE[T]ACH`t[A#=vm]TTACH`t[Q]UIT"
-    # $transform='Sort-Object -Property tmpregion,created-by,CreatedTime'
     break 
   }
   "MIG" { 
@@ -270,6 +275,10 @@ foreach ($sel in $sel) {
     "Compute:d" { $type="inline"; $argListMid = "compute instances describe --zone=$($sel.zone) $($sel.name)"; break }
     # "Compute:t" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance AND resource.labels.instance_id=$($sel.id)`" --format=`"value(format('$($sel.name):{0}',json_payload.message).sub(':startup-script:',':'))`""; break }
     "Compute:ta" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }  
+    "Container:p?$" { $type="inline"; $argListMid = "container node-pools list --region=$($sel.location) --cluster=$($sel.name)"; break }
+    "Container:d" { $type="inline"; $argListMid = "container clusters describe --region=$($sel.location) $($sel.name)"; break }
+    "Container:g" { $type="inline"; $argListMid = "container clusters get-credentials --region=$($sel.location) $($sel.name)"; break }
+    "Container:e" { $type="inline"; $argListMid = "container clusters delete --region=$($sel.location) $($sel.name)"; break }
     "Disks:d" { $type="inline"; $argListMid = "compute disks describe --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
     "Disks:e" { $type="inline"; $argListMid = "compute disks delete --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
     "Disks:s" { $type="cmd"; $argListMid = "compute disks snapshot --$($sel.lscope)=$($sel.location) $($sel.name) --snapshot-names=ps-gcloud-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($sel.name)"; break }
