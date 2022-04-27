@@ -85,8 +85,9 @@ switch ($ResourceType) {
     break 
   }
   "Container" { 
-    $outputCmd="gcloud container clusters list --format='csv(name,zone,MACHINE_TYPE,MASTER_IP,MASTER_VERSION,NODE_VERSION,NUM_NODES,STATUS,createTime.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'";
+    $outputCmd="gcloud container clusters list --format='csv(name,zone,MACHINE_TYPE,MASTER_IP,MASTER_VERSION,NODE_VERSION,NUM_NODES,STATUS,networkConfig.subnetwork.scope(regions).segment(0):label=tmpregion,createTime.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'";
     $instructions="[P]OOL:list`t[D]ESCRIBE`t[G]ET-CREDENTIAL`tD[E]LETE`t[Q]UIT"
+    $transform='Sort-Object -Property tmpregion,Name'
     break 
   }  
   "Disks" { 
