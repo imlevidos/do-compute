@@ -1,3 +1,4 @@
+#!/usr/bin/pwsh
 param(
   [Parameter()][ValidateSet('Compute','Configurations','Container','Disks','MIG','Backend-Services','Snapshots','SQL')][string[]]$ResourceType,
   [nullable[bool]]$UseInternalIpSsh,
@@ -236,13 +237,15 @@ if ($sel -eq $null) {
 
 if ($UseInternalIpSsh -eq $null) {
   # -UseInternalIpSsh switch not present, use proactive detection  
-  if ((gwmi win32_computersystem).partofdomain -eq $true) {
-    # Domain joined workstation, use Internal IP for SSH
-    $UseInternalIpSsh = $true
-  }
-  else {
-    # Standalone workstation, use IAP
-    $UseInternalIpSsh = $false
+  if ($PSVersionTable.OS -notlike 'Linux*') {
+    if ((gwmi win32_computersystem).partofdomain -eq $true) {
+      # Domain joined workstation, use Internal IP for SSH
+      $UseInternalIpSsh = $true
+    }
+    else {
+      # Standalone workstation, use IAP
+      $UseInternalIpSsh = $false
+    }
   }
 }
 
@@ -310,10 +313,18 @@ foreach ($sel in $sel) {
   $shellParams = "/c"
   $windowStyle = "Normal"
   $SleepCmd = "& timeout /t 60"
+  $argGcloud = "gcloud"
 
   if (${Show-Command} -eq $true) {
     $shellParams = "COMMAND:"
     $SleepCmd = ""
+  }
+  elseif ($PSVersionTable.OS -like 'Linux*') {
+    $shell = "gcloud"
+    $argGcloud = ""
+    $shellParams = ""
+    $SleepCmd = ""
+    $type = "linux"
   }
   elseif ($type -eq "inline") {
     $shellParams = "/c"
@@ -331,10 +342,13 @@ foreach ($sel in $sel) {
     }
   }
 
-  $argList = "$shellParams gcloud $argListMid $SleepCmd"
+  $argList = "$shellParams $argGcloud $argListMid $SleepCmd"
 
   if (${Show-Command} -eq $true) {
     Write-Host "$argList"
+  }
+  elseif ($type -eq "linux") {
+    Start-Process $shell -ArgumentList "$argList "
   }
   elseif ($type -eq "inline") {
     # Invoke-Expression "& $argList"
