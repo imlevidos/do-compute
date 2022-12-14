@@ -79,7 +79,7 @@ if($SelfLink -eq $true) {
 switch ($ResourceType) {
   "Compute" { 
     $outputCmd="gcloud compute instances list --format='csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers),id,networkInterfaces[0].subnetwork.scope(regions).segment(0):label=tmpregion,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'";
-    $instructions="[S]SH`tE[X#=`"cmd`"]ECUTE`t[C#=`"cmd`"]MD-INLINE`t[O]UTPUT-serial-log`t[T]AIL-STARTUP`t[U]PDATE-instance-template`t[R]ESET`t[P]OWER-OFF`t[D]ESCRIBE`t[Q]UIT"
+    $instructions="[S]SH`tE[X#=`"cmd`"]ECUTE`t[C#=`"cmd`"]MD-INLINE`t[O]UTPUT-serial-log`t[T]AIL-STARTUP`t[U]PDATE-instance-template`t[^]Upload`t[v]Download`t[R]ESET`t[P]OWER-OFF`t[D]ESCRIBE`t[Q]UIT"
     $transform='Sort-Object -Property tmpregion,created-by,CreatedTime'
     break 
   }
@@ -270,6 +270,7 @@ foreach ($sel in $sel) {
     "Compute:d" { $type="inline"; $argListMid = "compute instances describe --zone=$($sel.zone) $($sel.name)"; break }
     # "Compute:t" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance AND resource.labels.instance_id=$($sel.id)`" --format=`"value(format('$($sel.name):{0}',json_payload.message).sub(':startup-script:',':'))`""; break }
     "Compute:ta" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }  
+    "Compute:^" { $type="cmd"; $argListMid = "compute scp $UseInternalIpCmd --zone=$($sel.zone) $($param) $($sel.name):/tmp/$(Get-Date -Format 'yyyyMMdd-HHmmss')"; break }
     "Disks:d" { $type="inline"; $argListMid = "compute disks describe --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
     "Disks:e" { $type="inline"; $argListMid = "compute disks delete --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
     "Disks:s" { $type="cmd"; $argListMid = "compute disks snapshot --$($sel.lscope)=$($sel.location) $($sel.name) --snapshot-names=ps-gcloud-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($sel.name)"; break }
