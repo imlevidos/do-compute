@@ -181,7 +181,7 @@ if ($sel -eq $null) {
 
 if ($sel -eq $null) {
   # Lookup phase 1
-  $Answers = Select-String -InputObject $Answer -Pattern '^([a-z]{1})?((\d{1,3}))?(=(.+))?$' | select -ExpandProperty Matches | select -ExpandProperty Groups | select -ExpandProperty Value
+  $Answers = Select-String -InputObject $Answer -Pattern '^([a-z\^]{1})?((\d{1,3}))?(=(.+))?$' | select -ExpandProperty Matches | select -ExpandProperty Groups | select -ExpandProperty Value
 
  
   if ($Answers -ne $null) {
@@ -203,7 +203,7 @@ if ($sel -eq $null) {
   $Answers = Select-String -InputObject $Answer -Pattern '^([a-z]{1})?(:([\da-z\-\*]+))?(=(.+))?$' | select -ExpandProperty Matches | select -ExpandProperty Groups | select -ExpandProperty Value
 
   if ($Answers -ne $null) {
-    $Action = $Answers[1]
+    $Action = [System.Text.RegularExpressions.Regex]::Escape($Answers[1])
     $Filter = $Answers[3]
     $Param = $Answers[5]
 
@@ -270,7 +270,8 @@ foreach ($sel in $sel) {
     "Compute:d" { $type="inline"; $argListMid = "compute instances describe --zone=$($sel.zone) $($sel.name)"; break }
     # "Compute:t" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance AND resource.labels.instance_id=$($sel.id)`" --format=`"value(format('$($sel.name):{0}',json_payload.message).sub(':startup-script:',':'))`""; break }
     "Compute:ta" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }  
-    "Compute:^" { $type="cmd"; $argListMid = "compute scp $UseInternalIpCmd --zone=$($sel.zone) $($param) $($sel.name):/tmp/$(Get-Date -Format 'yyyyMMdd-HHmmss')"; break }
+    "Compute:\^" { $type="cmd"; $argListMid = "compute scp $UseInternalIpCmd --zone=$($sel.zone) --recurse $($param) $($sel.name):/tmp/$($param)"; Write-Output "Uploading ``$($param)`` to ``/tmp/$($param)``.`n"; break }
+    "Compute:v" { $type="cmd"; $argListMid = "compute scp $UseInternalIpCmd --zone=$($sel.zone) $($sel.name):$($param) ./$($param)"; break }
     "Disks:d" { $type="inline"; $argListMid = "compute disks describe --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
     "Disks:e" { $type="inline"; $argListMid = "compute disks delete --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
     "Disks:s" { $type="cmd"; $argListMid = "compute disks snapshot --$($sel.lscope)=$($sel.location) $($sel.name) --snapshot-names=ps-gcloud-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($sel.name)"; break }
