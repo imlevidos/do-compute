@@ -1,6 +1,7 @@
 ## Add script location to %PATH%
 param(
-  [Switch]$Uninstall
+  [Switch]$Uninstall,
+  [Switch]$RefreshOnly	
 )
 
 $actionVerb = ''
@@ -46,7 +47,7 @@ Write-Output ''
 ###  Install
 ###
 
-if ($Uninstall -ne $true) {
+if (!$Uninstall -and !$RefreshOnly) {
 	$actionVerb = 'INSTALL'
   $existingPaths = Get-EnvPathsArr
 	$existingPathsUser = Get-EnvPathsArr('User')
@@ -74,7 +75,7 @@ if ($Uninstall -ne $true) {
 ###  Uninstall
 ###
 
-if ($Uninstall -eq $true) {
+if ($Uninstall -and !$RefereshOnly) {
 	$actionVerb = 'UNINSTALL'
 	$existingPathsUser = Get-EnvPathsArr('User')
 	
@@ -102,11 +103,18 @@ if ($Uninstall -eq $true) {
 ###  Refresh Shell
 ###
 
+if ($RefereshOnly) {
+	$actionVerb = 'REFRESH-ONLY'
+}
+
 $pathsRegistry = $(Get-EnvPathsArr) -join ';'
 
 if($pathsRegistry -ne $env:Path) {
 	Write-Output "${actionVerb}: Refreshing %PATH% in current shell..."		
 	$env:Path = $(Get-EnvPathsArr) -join ';'
+}
+else {
+	Write-Output "${actionVerb}: %PATH% already up to date."
 }
 
 Write-Output ''
