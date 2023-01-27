@@ -496,7 +496,7 @@ foreach ($sel in $sel) {
           }
         }
       }
-      $tags | Out-GridView
+      $tags.GetEnumerator() | Select-Object -ExpandProperty Value | Sort-Object -Property Key | Out-GridView
       return
     }
     default { $Raise_Error = "No action defined for ``${ResourceType}:${action}``" ; Throw $Raise_Error }
