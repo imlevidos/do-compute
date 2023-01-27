@@ -458,20 +458,24 @@ foreach ($sel in $sel) {
     "Firewall:o" { $instances | Out-GridView; return }
     "Firewall:t" {
       $of = gcloud compute firewall-rules list --format=json | ConvertFrom-Json
-      $tags = @{}
+      # $tags = @{}
+      $tags = New-Object System.Collections.Generic.Dictionary"[String,PSObject]"
       foreach ($f in $of) {
         foreach ($t in $f.targetTags) {
-          # $tags += New-Object PSObject -Property @{target_tag = $t; firewall_name = $f.name }
-          # Check if dictionary element already exists
           if ($tags.ContainsKey($t)) {
-            $tags[$t].Add($f.name)
+            $tags[$t].Firewall_rules += $f.name
+            $tags[$t].Count += 1
           }
           else {
-            $tags.Add($t, [System.Collections.Generic.List[System.Object]]$f.name)
+            $tag = New-Object psobject
+            $tag | Add-Member -MemberType NoteProperty -Name Key -Value $t
+            $tag | Add-Member -MemberType NoteProperty -Name Count -Value 1
+            $tag | Add-Member -MemberType NoteProperty -Name Firewall_rules -Value @([System.Collections.Generic.List[System.Object]]$f.name)
+            $tags.Add($t, $tag)
           }
         }
       }
-      $tags | Out-GridView
+      $tags.GetEnumerator() | Select-Object -ExpandProperty Value | Sort-Object -Property Key | Out-GridView
       return
     }
     "Firewall:s" {
@@ -480,10 +484,15 @@ foreach ($sel in $sel) {
       foreach ($f in $of) {
         foreach ($t in $f.sourceTags) {
           if ($tags.ContainsKey($t)) {
-            $tags[$t].Add($f.name)
+            $tags[$t].Firewall_rules += $f.name
+            $tags[$t].Count += 1
           }
           else {
-            $tags.Add($t, [System.Collections.Generic.List[System.Object]]$f.name)
+            $tag = New-Object psobject
+            $tag | Add-Member -MemberType NoteProperty -Name Key -Value $t
+            $tag | Add-Member -MemberType NoteProperty -Name Count -Value 1
+            $tag | Add-Member -MemberType NoteProperty -Name Firewall_rules -Value @([System.Collections.Generic.List[System.Object]]$f.name)
+            $tags.Add($t, $tag)
           }
         }
       }
