@@ -102,6 +102,7 @@ $SelfLink = $SelfLink -or $Uri
 # Alternative parameter validation
 if ($ResourceType -eq $null) {
   foreach ($rt in $ResourceTypes) {
+    # Dynamically check if the switches are present
     $rtval = Invoke-Expression "`${$rt}"
     if ($rtval -eq $true) {
       $ResourceType = $rt
@@ -109,7 +110,7 @@ if ($ResourceType -eq $null) {
     }
   }
   if ($ResourceType -eq $null) {
-    $ResourceType = $ResourceTypes[0] # Default Resource Type is Compute
+    $ResourceType = 'Compute'
   }
 }
 
@@ -131,7 +132,7 @@ function Get-EnvPathsArr {
 }
 
 
-$Sel = $null
+[array]$Sel = $null
 
 # $env:PATH="d:\src\do-compute;$env:path"
 if ($Install -eq $true -and ![string]::IsNullOrEmpty($PSScriptRoot)) {
@@ -205,7 +206,7 @@ switch ($ResourceType) {
     break
   }
   "Firewall" {
-    $outputCmd = "gcloud compute firewall-rules list --format='csv(network.scope(networks):sort=1,name:sort=2,disabled,direction,priority,sourceRanges,destinationRanges,sourceTags,targetTags$SelfLinkOpts)'";
+    $outputCmd = "gcloud compute firewall-rules list --format='csv(network.scope(networks):sort=1,name:sort=2,disabled,direction,priority,sourceRanges,destinationRanges,sourceTags,targetTags,logConfig.enable.lower():label='logging'$SelfLinkOpts)'";
     $instructions = "[D]ESCRIBE`t[O]UT-GRIDVIEW`t[T]ARET-TAGS`t[S]OURCE-TAGS`t[Q]UIT"
     break    
   }
@@ -256,205 +257,429 @@ do {
 
 } while ([string]::IsNullOrEmpty($Answer))
 
+function ConfigurationsActivateWildcard {
+  param(
+    [array]$Menu,
+    [string]$Wildcard
+  )
 
-if ($sel -eq $null) {
-  # Lookup phase 0 - gcloud config configurations shortcut
-  if ($ResourceType -eq 'Configurations' -and $Answer -notmatch '^\d+$' ) {
-    $sel = $instances | where name -like "*$Answer*"
-    $action = 'a'
-
-    if (($sel | measure).Count -eq 0) {
-      $Raise_Error = "Filter *$Answer* found no matching entries." ; Throw $Raise_Error     
-    }
-    elseif (($sel | measure).Count -gt 1) {
-      $Raise_Error = "Filter *$Answer* matched multiple entries, pls narrow." ; Throw $Raise_Error     
-    }
+  # Search by configuration name or project id
+  [array]$sel = $Menu | Where-Object { ($_.name -like "*$Wildcard*") -or ($_.project -like "*$Wildcard*") }
+  if ($sel.Count -eq 1) {
+    return $sel
   }
-}
-
-if ($sel -eq $null) {
-  # Lookup phase 1 - Match by index
-  $Answers = Select-String -InputObject $Answer -Pattern '^([a-z\^]{1})?((\d{1,3}))?(=(.+))?$' | select -ExpandProperty Matches | select -ExpandProperty Groups | select -ExpandProperty Value
-
-  if ($Answers -ne $null) {
-    $Action = $Answers[1]
-    $Item = $Answers[3]
-    $Param = $Answers[5]
-
-    if ([string]::IsNullOrEmpty($Item) -and !($ResourceType -eq 'Firewall' -and $Action -in @('o', 't', 's'))) {
-      $Raise_Error = "ERROR: No item selected." ; Throw $Raise_Error     
-    }
+  if ($sel.Count -gt 1) {
+    $Raise_Error = "Filter *$Wildcard* found more than one matching configurations, please narrow." ; Throw $Raise_Error
+  }
   
-    $sel = $instances[$item - 1] # Selection
-    Write-Host "Your selection: $sel`n"
+  # Search by project name
+  [array]$projects = gcloud projects list --format='json' --filter="name:*$Wildcard*" | ConvertFrom-Json
+  if ($projects.Count -eq 0) {
+    $Raise_Error = "Filter *$Wildcard* found no matching projects." ; Throw $Raise_Error
+  }
+  if ($projects.Count -gt 1) {
+    $Raise_Error = "Filter *$Wildcard* found more than one matching projects, please narrow." ; Throw $Raise_Error
+  }
+
+  return @{
+    Action     = 'a'
+    SelIndex   = $null
+    Param      = $null
+    Selections = [array]$Menu | Where-Object project -eq $projects.projectId
+    SelCount   = 1
+  }
+
+  $sel = $Menu | Where-Object project -eq $projects.projectId
+  return $sel
+}
+function ExtractAnswersByIndex {
+  param(
+    [string]$Answer,
+    [array]$Menu
+  )
+  Write-Debug "[ExtractAnswersByIndex] Answer= ``$Answer``"
+  $Answers = Select-String -InputObject $Answer -Pattern '^([a-z\^]{1})?((\d{1,3}))?(=(.+))?$' | Select-Object -ExpandProperty Matches | Select-Object -ExpandProperty Groups | Select-Object -ExpandProperty Value
+
+  if ($null -eq $Answers) {
+    return $null
+  }
+
+  if ($Answers[3]) {
+    [array]$Selections = $Menu[$Answers[3] - 1] 
+  }
+
+  return @{
+    Action     = $Answers[1]
+    SelIndex   = $Answers[3]
+    Param      = $Answers[5]
+    Selections = $Selections
+    SelCount   = $Selections.Count
   }
 }
 
+function ExtractAnswersByWildcard {
+  param(
+    [string]$Answer,
+    [array]$Menu
+  )
+  Write-Debug "[ExtractAnswersByWildcard] Answer= ``$Answer``"
+  $Answers = Select-String -InputObject $Answer -Pattern '^([a-z]{1})?(:([\da-z\-\*]+))?(=(.+))?$' | Select-Object -ExpandProperty Matches | Select-Object -ExpandProperty Groups | Select-Object -ExpandProperty Value
 
-if ($sel -eq $null) {
-  # Lookup phase 2 - Match by wildcard
-  $Answers = Select-String -InputObject $Answer -Pattern '^([a-z]{1})?(:([\da-z\-\*]+))?(=(.+))?$' | select -ExpandProperty Matches | select -ExpandProperty Groups | select -ExpandProperty Value
+  if ($null -eq $Answers) {
+    Write-Debug "[ExtractAnswersByWildcard] Pattern not matched ``$Answer``"
+    return $null
+  }
 
-  if ($Answers -ne $null) {
-    $Action = $Answers[1]
-    $Filter = $Answers[3]
-    $Param = $Answers[5]
+  $Filter = $Answers[3]
+  [array]$Selections = $Menu | Where-Object name -ilike "*$Filter*"
 
-    $sel = $instances | where name -ilike "*$Filter*"
+  return @{
+    Action     = $Answers[1]
+    SelIndex   = $null
+    Param      = $Answers[5]
+    Selections = $Selections
+    SelCount   = $Selections.Count
+  }
+}
 
-    if (($sel | measure).Count -eq 0) {
-      $Raise_Error = "Filter *$Filter* found no matching entries." ; Throw $Raise_Error     
-    }
-    elseif (($sel | measure).Count -gt 1) {
-      Write-Host "`nYour selections:"
-      $sel.Name | % { "- $_" }
-      Write-Host ""
-      # Do nothing here but confirm with user at the next step.
-    }
-    else {
-      Write-Host "Your selection: $sel`n"
+function DetectUseInternalIpSsh {
+  param(
+    $Switch
+  )
+
+  if ($Switch -eq $null) {
+    # -UseInternalIpSsh switch not present, use proactive detection  
+    # Domain joined workstation -> use Internal IP for SSH
+    # Standalone workstation -> use IAP
+    $Switch = (Get-WmiObject win32_computersystem).partofdomain 
+  }
+
+  if ($Switch -eq $true) {
+    $Cmd = '--internal-ip'
+  }
+  else {
+    $Cmd = ''
+  }
+
+  return @{
+    Switch = $Switch
+    Cmd    = $Cmd
+  }
+}
+
+function DisplaySelectionsAndConfirm {
+  param(
+    [array]$Answers,
+    [bool]${Show-Command}
+  )
+
+  Write-Debug "[DisplaySelectionsAndConfirm] Answers= ``$($Answers | Out-String)``"
+  Write-Debug "[DisplaySelectionsAndConfirm] Show-Command= ``${Show-Command}``"
+  if (${Show-Command} -eq $true) {
+    return
+  }
+  if ($Answers.SelCount -eq 0) {
+    return
+  }
+  elseif ($Answers.SelCount -eq 1) {
+    Write-Host "Your selection: $($Answers.Selections[0])"
+  }
+  else {
+    Write-Host "Your selections: $($Answers.Selections | ft | Out-String)"
+    Write-Debug "[DisplaySelectionsAndConfirm] Displaying multiple selections:"
+    $YesNo = Read-Host "WARNING: Execute on multiple targets? (yes/no)"
+    Write-Host ""
+    if (@('y', 'yes') -notcontains $YesNo) {
+      exit; break
     }
   }
 }
 
-if ($sel -eq $null) {
+# Lookup phase 0 - gcloud config configurations shortcut
+if ($ResourceType -eq 'Configurations' -and $Answer -notmatch '^\d+$' -and $Answer -notmatch '^c=.*') {
+  $action = 'a'
+  $Answers = ConfigurationsActivateWildcard -Menu $instances -Wildcard $Answer
+}
+else {
+  $Answers = ExtractAnswersByIndex -Answer $Answer -Menu $instances
+  Write-Debug "[ExtractAnswersByIndex] ``$Answer`` -> ``$($Answers.Selections | Out-String)``"
+}
+if ($null -eq $Answers) {
+  $Answers = ExtractAnswersByWildcard -Answer $Answer -Menu $instances
+  Write-Debug "[ExtractAnswersByWildcard] ``$Answer`` -> ``$($Answers.Selections | Out-String)``"
+}
+if ($null -eq $Answers) {
   $Raise_Error = "Unable to determine selection based on *$Answer*." ; Throw $Raise_Error     
 }
 
-if ($UseInternalIpSsh -eq $null) {
-  # -UseInternalIpSsh switch not present, use proactive detection  
-  if ((gwmi win32_computersystem).partofdomain -eq $true) {
-    # Domain joined workstation, use Internal IP for SSH
-    $UseInternalIpSsh = $true
-  }
-  else {
-    # Standalone workstation, use IAP
-    $UseInternalIpSsh = $false
-  }
+$IapMode = DetectUseInternalIpSsh -Switch $UseInternalIpSsh
+$Answers.Add('UseInternalIpSsh', $IapMode.Switch)
+$Answers.Add('UseInternalIpSshCmd', $IapMode.Cmd)
+
+
+$Answers
+
+DisplaySelectionsAndConfirm -Answers $Answers -Show-Command ${Show-Command}
+
+# Default Exec Style
+$ExecStyle = New-Object -TypeName PsObject -Property @{
+  ShellType          = ""
+  ShellArgsMid       = ""
+  ShellCmd           = "cmd";
+  ShellParams        = "/c";
+  WindowStyle        = "Normal";
+  SleepCmd           = "& timeout /t 60"
+  AdditionalSwitches = @{}
 }
 
-if ($UseInternalIpSsh) {
-  $UseInternalIpCmd = "--internal-ip"
-}
+$SelOptions = New-Object System.Collections.ArrayList
 
-$selCount = $sel.Count
-if ($selCount -gt 1 -and ${Show-Command} -eq $false) {
-  $YesNo = Read-Host "WARNING: Execute on multiple targets? (yes/no)"
-  Write-Host ""
-  if (@('y', 'yes') -notcontains $YesNo) {
-    exit; break
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = ".*"
+  HelpItem     = '[Q]UIT'
+  Regex        = ".*:q$"
+  ShellArgsMid = ""
+  ShellType    = "quit"
+}; $SelOptions.Add($Option)
+
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = "Compute"
+  Default      = $true
+  HelpItem     = '[S]SH'
+  Hotkey       = "s"
+  ShellArgsMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name)"
+  ShellType    = "hcmd"
+}; $SelOptions.Add($Option)
+
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = "Compute"
+  HelpItem     = '[U]PDATE'
+  Hotkey       = "u"
+  ShellArgsMid = "compute instance-groups managed update-instances --region=$($sel.zone -replace '..$') --minimal-action=replace $($sel.'created-by') --instances=$($sel.name)"
+  ShellType    = "ncmd"
+}; $SelOptions.Add($Option)
+
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = "Compute"
+  HelpItem     = '[R]ESET'
+  Hotkey       = "r"
+  ShellArgsMid = "compute instances reset --zone=$($sel.zone) $($sel.name)"
+  ShellType    = "ncmd"
+}; $SelOptions.Add($Option)
+
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = "Compute"
+  HelpItem     = '[P]OWER-OFF'
+  Hotkey       = "p"
+  ShellArgsMid = "compute instances stop --zone=$($sel.zone) $($sel.name)"
+  ShellType    = "ncmd"
+}; $SelOptions.Add($Option)
+
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = "Compute"
+  HelpItem     = '[O]UTPUT-seral-log'
+  Hotkey       = "o"
+  ShellArgsMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"
+  ShellType    = "log"
+}; $SelOptions.Add($Option)
+
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = "Compute"
+  HelpItem     = '[L]OG'
+  Hotkey       = "l"
+  ShellArgsMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"
+  ShellType    = "log"
+}; $SelOptions.Add($Option)
+
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = "Compute"
+  HelpItem     = 'E[X#=cmd]ECUTE'
+  Hotkey       = "x"
+  ShellArgsMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"
+  ShellType    = "log"
+}; $SelOptions.Add($Option)
+
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = "Compute"
+  HelpItem     = '[D]ESCRIBE'
+  Hotkey       = "d"
+  ShellArgsMid = "compute instances describe --zone=$($sel.zone) $($sel.name)"
+  ShellType    = "inlineyq"
+}; $SelOptions.Add($Option)
+
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = "Compute"
+  HelpItem     = '[C#=cmd]-INLINE'
+  Hotkey       = "c"
+  ShellArgsMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name) --command `"$($param)`""
+  ShellType    = "inline"
+}; $SelOptions.Add($Option)
+
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = "Compute"
+  HelpItem     = '[T]AIL-STARTUP'
+  Hotkey       = "t"
+  ShellArgsMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""
+  ShellType    = "log"
+}; $SelOptions.Add($Option)
+
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = "Compute"
+  HelpItem     = '[^]UPLOAD'
+  Hotkey       = "^"
+  ShellArgsMid = "compute scp $UseInternalIpCmd --zone=$($sel.zone) ${isRecurse} $param $($sel.name):$dst"
+  ShellType    = "cmd"
+  TaskPrep     = {
+    if (!(Test-Path $param)) {
+      $Raise_Error = "File or folder ``$param`` not found." ; Throw $Raise_Error     
+    }
+    if (Test-Path $param -PathType Container) {
+      $isRecurse = '--recurse'
+      $dst = '/tmp'
+    }
+    else {
+      $isRecurse = ''
+      $dst = "/tmp/$(Split-Path $param -Leaf)"
+    }
   }
-}
+  TaskPost     = {
+    Write-Output "Uploading ``$param`` to ``$dst``.`n"
+  }
+}; $SelOptions.Add($Option)
+
+$Option = New-Object -TypeName PsObject -Property @{
+  Category     = "Compute"
+  HelpItem     = '[v]DOWNLOAD'
+  Hotkey       = "v"
+  ShellArgsMid = "compute scp $UseInternalIpCmd $isRecurse --zone=$($sel.zone) $($sel.name):$param $dst"
+  ShellType    = "cmd"
+  TaskPrep     = {
+    $dst = "$($sel.name)-$(Split-Path $param -Leaf)-$(Get-Date -Format 'yyMMdd-HHmmss')"
+    if ($param[-1] -eq '/') {
+      # Copying a directory
+      $isRecurse = '--recurse'
+    }
+    else {
+      $isRecurse = ''
+      if (!(${Show-Command})) { New-Item -ItemType Directory -Path $dst }
+    }
+  }
+  TaskPost     = {
+    Write-Output "Uploading ``$param`` to ``$dst``.`n"
+  }
+}; $SelOptions.Add($Option)
+return
 
 foreach ($sel in $sel) {
   if ($selCount -gt 1 -and ${Show-Command} -eq $false) {
     Write-Host "[PS-GCLOUD] Processing: $($sel.name)...`n"
   }
   switch -regex ("${ResourceType}:${action}") {
-    ".*:q$" { exit; break }
-    "Compute:s?$" { $type = "hcmd"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name)"; break }
-    "Compute:u" { $type = "cmd"; $argListMid = "compute instance-groups managed update-instances --region=$($sel.zone -replace '..$') --minimal-action=replace $($sel.'created-by') --instances=$($sel.name)"; break }
-    "Compute:r" { $type = "cmd"; $argListMid = "compute instances reset --zone=$($sel.zone) $($sel.name)"; break }
-    "Compute:p" { $type = "cmd"; $argListMid = "compute instances stop --zone=$($sel.zone) $($sel.name)"; break }
-    "Compute:o" { $type = "log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"; break }
-    "Compute:l" { $type = "log"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name) --command=`"sudo journalctl -xefu google-startup-scripts.service`""; break }
-    "Compute:x" { $type = "log"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name) --command `"$($param)`""; break }
-    "Compute:c" { $type = "inline"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name) --command `"$($param)`""; break }
-    "Compute:d" { $type = "inline"; $argListMid = "compute instances describe --zone=$($sel.zone) $($sel.name)"; break }
+    # ".*:q$" { exit; break }
+    # "Compute:s?$" { $type = "hcmd"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name)"; break }
+    # "Compute:u" { $type = "cmd"; $argListMid = "compute instance-groups managed update-instances --region=$($sel.zone -replace '..$') --minimal-action=replace $($sel.'created-by') --instances=$($sel.name)"; break }
+    # "Compute:r" { $type = "cmd"; $argListMid = "compute instances reset --zone=$($sel.zone) $($sel.name)"; break }
+    # "Compute:p" { $type = "cmd"; $argListMid = "compute instances stop --zone=$($sel.zone) $($sel.name)"; break }
+    # "Compute:o" { $type = "log"; $argListMid = "compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)"; break }
+    # "Compute:l" { $type = "log"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name) --command=`"sudo journalctl -xefu google-startup-scripts.service`""; break }
+    # "Compute:x" { $type = "log"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name) --command `"$($param)`""; break }
+    # "Compute:c" { $type = "inline"; $argListMid = "compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name) --command `"$($param)`""; break }
+    # "Compute:d" { $type = "inlineyq"; $argListMid = "compute instances describe --zone=$($sel.zone) $($sel.name)"; break }
     # "Compute:t" { $type="log"; $argListMid = "beta logging tail `"resource.type=gce_instance AND resource.labels.instance_id=$($sel.id)`" --format=`"value(format('$($sel.name):{0}',json_payload.message).sub(':startup-script:',':'))`""; break }
-    "Compute:t" { $type = "log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }
+    # "Compute:t" { $type = "log"; $argListMid = "beta logging tail `"resource.type=gce_instance`" --format=`"value(format('{0}:{1}',resource.labels.instance_id,json_payload.message).sub(':startup-script:',':'))`""; break }
 
-    'Compute:\^' { 
-      $type = "cmd";
-      if (!(Test-Path $param)) {
-        $Raise_Error = "File or folder ``$param`` not found." ; Throw $Raise_Error     
-      }
-      if (Test-Path $param -PathType Container) {
-        $isRecurse = '--recurse'
-        $dst = '/tmp'
-      }
-      else {
-        $isRecurse = ''
-        $dst = "/tmp/$(Split-Path $param -Leaf)"
-      }
+    # 'Compute:\^' { 
+    #   $type = "cmd";
+    #   if (!(Test-Path $param)) {
+    #     $Raise_Error = "File or folder ``$param`` not found." ; Throw $Raise_Error     
+    #   }
+    #   if (Test-Path $param -PathType Container) {
+    #     $isRecurse = '--recurse'
+    #     $dst = '/tmp'
+    #   }
+    #   else {
+    #     $isRecurse = ''
+    #     $dst = "/tmp/$(Split-Path $param -Leaf)"
+    #   }
       
-      $argListMid = "compute scp $UseInternalIpCmd --zone=$($sel.zone) ${isRecurse} $param $($sel.name):$dst";
-      Write-Output "Uploading ``$param`` to ``$dst``.`n"; break 
-    }
+    #   $argListMid = "compute scp $UseInternalIpCmd --zone=$($sel.zone) ${isRecurse} $param $($sel.name):$dst";
+    #   Write-Output "Uploading ``$param`` to ``$dst``.`n"; break 
+    # }
 
-    "Compute:v" { 
-      $type = "cmd";
-      # Create unique folder names as ${ComputerName}-${TargetFolderName}-${Timestamp}#
-      # TODO - handle root folder
-      $dst = "$($sel.name)-$(Split-Path $param -Leaf)-$(Get-Date -Format 'yyMMdd-HHmmss')"
-      if ($param[-1] -eq '/') {
-        # Copying a directory
-        $isRecurse = '--recurse'
-      }
-      else {
-        $isRecurse = ''
-        if (!(${Show-Command})) { New-Item -ItemType Directory -Path $dst }
-      }
-      $argListMid = "compute scp $UseInternalIpCmd $isRecurse --zone=$($sel.zone) $($sel.name):$param $dst"; break 
-    }
+    # "Compute:v" { 
+    #   $type = "cmd";
+    #   # Create unique folder names as ${ComputerName}-${TargetFolderName}-${Timestamp}#
+    #   # TODO - handle root folder
+    #   $dst = "$($sel.name)-$(Split-Path $param -Leaf)-$(Get-Date -Format 'yyMMdd-HHmmss')"
+    #   if ($param[-1] -eq '/') {
+    #     # Copying a directory
+    #     $isRecurse = '--recurse'
+    #   }
+    #   else {
+    #     $isRecurse = ''
+    #     if (!(${Show-Command})) { New-Item -ItemType Directory -Path $dst }
+    #   }
+    #   $argListMid = "compute scp $UseInternalIpCmd $isRecurse --zone=$($sel.zone) $($sel.name):$param $dst"; break 
+    # }
 
-    "Disks:d" { $type = "inline"; $argListMid = "compute disks describe --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
-    "Disks:e" { $type = "inline"; $argListMid = "compute disks delete --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
-    "Disks:s" { $type = "cmd"; $argListMid = "compute disks snapshot --$($sel.lscope)=$($sel.location) $($sel.name) --snapshot-names=ps-gcloud-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($sel.name)"; break }
-    "Disks:t" { $type = "inline"; switch ( $sel.lscope ) { region { $dscope = 'regional' }; zone { $dscope = 'zonal' }; default { $Raise_Error = "Unexpected Location Scope $($sel.lscope)." ; Throw $Raise_Error } }; $argListMid = "compute instances detach-disk `"projects/$($sel.tmpUser)`" --disk-scope=$dscope `"--disk=$($sel.tmpSelfLink)`""; break }
-    "Disks:a" { $type = "inline"; switch ( $sel.lscope ) { region { $dscope = 'regional' }; zone { $dscope = 'zonal' }; default { $Raise_Error = "Unexpected Location Scope $($sel.lscope)." ; Throw $Raise_Error } }; $argListMid = "compute instances attach-disk `"$($param)`" --disk-scope=$dscope `"--disk=$($sel.tmpSelfLink)`""; break }
-    "MIG:r" { $type = "cmd"; $argListMid = "compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)"; break }
-    "MIG:u" { $type = "cmd"; $argListMid = "compute instance-groups managed rolling-action replace $($sel.name) --region=$($sel.location)"; break }
-    "MIG:c" { $type = "cmd"; $argListMid = "compute instance-groups managed update --clear-autohealing  $($sel.name) --region=$($sel.location)"; break }
-    "MIG:d" { $type = "inline"; $argListMid = "compute instance-groups managed describe $($sel.name) --region=$($sel.location)"; break }
-    "Snapshots:d" { $type = "inline"; $argListMid = "compute snapshots describe $($sel.name)"; break }
-    "SQL:l" { $type = "inline"; $argListMid = "sql backups list --instance=$($sel.name)"; break }
-    "SQL:b" { $type = "inline"; $argListMid = "sql backups create --instance=$($sel.name)"; break }
-    "SQL:s" { $type = "cmd"; $argListMid = "sql instances patch $($sel.name) --activation-policy=ALWAYS "; break }
-    "SQL:t" { $type = "cmd"; $argListMid = "sql instances patch $($sel.name) --activation-policy=NEVER "; break }
-    "SQL:r" { $type = "show-command"; $argListMid = "sql backups restore --restore-instance=$($sel.name)  $param"; ${Show-Command} = $true; break }
-    "SQL:e" { $type = "inline"; $argListMid = "sql instances delete $($sel.name) "; break }
-    "Storage:d" { $type = "inline"; $argListMid = "storage buckets describe gs://$($sel.name)"; break }
-    "Storage:l" { $type = "log"; $argListMid = "storage ls -r gs://$($sel.name)"; break }
-    "Storage:r" { $type = "log"; $argListMid = "storage ls -r --all-versions gs://$($sel.name)"; break }
-    "Storage:v" {
-      $type = "cmd";
-      if (!$Param) {
-        Write-Debug "No param specified, using root directory"
-        $src = "gs://$($sel.name)/*"
-        $pathName = 'root'
-      }
-      elseif ($Param[-1] -in @('/', '\')) {
-        Write-Debug "Downloading a folder"
-        $src = "gs://$($sel.name)/${param}*"
-        $pathName = Split-Path $Param -Leaf
-      }
-      else {
-        Write-Debug "Downloading a file"
-        $src = "gs://$($sel.name)/${param}"
-        $pathName = Split-Path $Param -Leaf
-      }
-      # Create unique folder names as ${ComputerName}-${TargetFolderName}-${Timestamp}
-      $dst = "gs--$($sel.name)-${pathName}-$(Get-Date -Format 'yyMMdd-HHmmss')" -replace '\*', '_'
-      if (!(${Show-Command})) { New-Item -ItemType Directory -Path $dst }
-      $argListMid = "storage cp -r $src ./$dst";
-    }
+    # "Disks:d" { $type = "inlineyq"; $argListMid = "compute disks describe --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
+    # "Disks:e" { $type = "inline"; $argListMid = "compute disks delete --$($sel.lscope)=$($sel.location) $($sel.name)"; break }
+    # "Disks:s" { $type = "cmd"; $argListMid = "compute disks snapshot --$($sel.lscope)=$($sel.location) $($sel.name) --snapshot-names=ps-gcloud-$(Get-Date -Format 'yyyyMMdd-HHmmss')-$($sel.name)"; break }
+    # "Disks:t" { $type = "inline"; switch ( $sel.lscope ) { region { $dscope = 'regional' }; zone { $dscope = 'zonal' }; default { $Raise_Error = "Unexpected Location Scope $($sel.lscope)." ; Throw $Raise_Error } }; $argListMid = "compute instances detach-disk `"projects/$($sel.tmpUser)`" --disk-scope=$dscope `"--disk=$($sel.tmpSelfLink)`""; break }
+    # "Disks:a" { $type = "inline"; switch ( $sel.lscope ) { region { $dscope = 'regional' }; zone { $dscope = 'zonal' }; default { $Raise_Error = "Unexpected Location Scope $($sel.lscope)." ; Throw $Raise_Error } }; $argListMid = "compute instances attach-disk `"$($param)`" --disk-scope=$dscope `"--disk=$($sel.tmpSelfLink)`""; break }
+    # "MIG:r" { $type = "cmd"; $argListMid = "compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)"; break }
+    # "MIG:u" { $type = "cmd"; $argListMid = "compute instance-groups managed rolling-action replace $($sel.name) --region=$($sel.location)"; break }
+    # "MIG:c" { $type = "cmd"; $argListMid = "compute instance-groups managed update --clear-autohealing  $($sel.name) --region=$($sel.location)"; break }
+    # "MIG:d" { $type = "inlineyq"; $argListMid = "compute instance-groups managed describe $($sel.name) --region=$($sel.location)"; break }
+    # "Snapshots:d" { $type = "inlineyq"; $argListMid = "compute snapshots describe $($sel.name)"; break }
+    # "SQL:l" { $type = "inline"; $argListMid = "sql backups list --instance=$($sel.name)"; break }
+    # "SQL:b" { $type = "inline"; $argListMid = "sql backups create --instance=$($sel.name)"; break }
+    # "SQL:s" { $type = "cmd"; $argListMid = "sql instances patch $($sel.name) --activation-policy=ALWAYS "; break }
+    # "SQL:t" { $type = "cmd"; $argListMid = "sql instances patch $($sel.name) --activation-policy=NEVER "; break }
+    # "SQL:r" { $type = "show-command"; $argListMid = "sql backups restore --restore-instance=$($sel.name)  $param"; ${Show-Command} = $true; break }
+    # "SQL:e" { $type = "inline"; $argListMid = "sql instances delete $($sel.name) "; break }
+    # "Storage:d" { $type = "inlineyq"; $argListMid = "storage buckets describe gs://$($sel.name)"; break }
+    # "Storage:l" { $type = "log"; $argListMid = "storage ls -r gs://$($sel.name)"; break }
+    # "Storage:r" { $type = "log"; $argListMid = "storage ls -r --all-versions gs://$($sel.name)"; break }
+    # "Storage:v" {
+    #   $type = "cmd";
+    #   if (!$Param) {
+    #     Write-Debug "No param specified, using root directory"
+    #     $src = "gs://$($sel.name)/*"
+    #     $pathName = 'root'
+    #   }
+    #   elseif ($Param[-1] -in @('/', '\')) {
+    #     Write-Debug "Downloading a folder"
+    #     $src = "gs://$($sel.name)/${param}*"
+    #     $pathName = Split-Path $Param -Leaf
+    #   }
+    #   else {
+    #     Write-Debug "Downloading a file"
+    #     $src = "gs://$($sel.name)/${param}"
+    #     $pathName = Split-Path $Param -Leaf
+    #   }
+    #   # Create unique folder names as ${ComputerName}-${TargetFolderName}-${Timestamp}
+    #   $dst = "gs--$($sel.name)-${pathName}-$(Get-Date -Format 'yyMMdd-HHmmss')" -replace '\*', '_'
+    #   if (!(${Show-Command})) { New-Item -ItemType Directory -Path $dst }
+    #   $argListMid = "storage cp -r $src ./$dst";
+    # }
 
-    "Storage:\^" {
-      $type = "cmd";
-      $src = $param
-      $dst = $sel.name
-      if (!(Test-Path $src)) {
-        $Raise_Error = "File or folder ``$src`` not found." ; Throw $Raise_Error     
-      }
+    # "Storage:\^" {
+    #   $type = "cmd";
+    #   $src = $param
+    #   $dst = $sel.name
+    #   if (!(Test-Path $src)) {
+    #     $Raise_Error = "File or folder ``$src`` not found." ; Throw $Raise_Error     
+    #   }
       
-      $argListMid = "storage cp -r $src gs://$dst";
-      Write-Output "Uploading ``$src`` to ``$dst``.`n"; break 
-    }
-    "backend-services:p?$" { $type = "inline"; $argListMid = "compute backend-services get-health $($sel.name) --region=$($sel.region) --format='table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label='zone',status.healthStatus.ipAddress,status.healthStatus.healthState)' --flatten='status.healthStatus'"; break }
-    "backend-services:d$" { $type = "inline"; $argListMid = "compute backend-services describe $($sel.name) --region=$($sel.region) --format=yaml"; break }
+    #   $argListMid = "storage cp -r $src gs://$dst";
+    #   Write-Output "Uploading ``$src`` to ``$dst``.`n"; break 
+    # }
+    # "backend-services:p?$" { $type = "inline"; $argListMid = "compute backend-services get-health $($sel.name) --region=$($sel.region) --format='table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label='zone',status.healthStatus.ipAddress,status.healthStatus.healthState)' --flatten='status.healthStatus'"; break }
+    # "backend-services:d$" { $type = "inlineyq"; $argListMid = "compute backend-services describe $($sel.name) --region=$($sel.region) --format=yaml"; break }
     "Configurations:a?$" { $type = "inline"; $argListMid = "config configurations activate $($sel.name)"; break }
-    "Configurations:c" { $type = "inline"; $argListMid = "config configurations create $($sel.name)"; break }
+    "Configurations:c" { $type = "inline"; $argListMid = "config configurations create $param"; break }
+    "Firewall:d" { $type = "inlineyq"; $argListMid = "compute firewall-rules describe $($sel.name) --format='yaml'"; break }
     "Firewall:o" { $instances | Out-GridView; return }
     "Firewall:t" {
       $of = gcloud compute firewall-rules list --format=json | ConvertFrom-Json
@@ -470,6 +695,7 @@ foreach ($sel in $sel) {
             $tag = New-Object psobject
             $tag | Add-Member -MemberType NoteProperty -Name Key -Value $t
             $tag | Add-Member -MemberType NoteProperty -Name Count -Value 1
+            $tag | Add-Member -MemberType NoteProperty -Name Network -Value ($f.network -split '/' | Select-Object -Last 1)
             $tag | Add-Member -MemberType NoteProperty -Name Firewall_rules -Value @([System.Collections.Generic.List[System.Object]]$f.name)
             $tags.Add($t, $tag)
           }
@@ -491,6 +717,7 @@ foreach ($sel in $sel) {
             $tag = New-Object psobject
             $tag | Add-Member -MemberType NoteProperty -Name Key -Value $t
             $tag | Add-Member -MemberType NoteProperty -Name Count -Value 1
+            $tag | Add-Member -MemberType NoteProperty -Name Network -Value ($f.network -split '/' | Select-Object -Last 1)
             $tag | Add-Member -MemberType NoteProperty -Name Firewall_rules -Value @([System.Collections.Generic.List[System.Object]]$f.name)
             $tags.Add($t, $tag)
           }
@@ -526,44 +753,32 @@ foreach ($sel in $sel) {
     return
   }
 
-  if ($type -eq "log" -and $ConEmuCmd) {
-    $type = "logconemu"
-  }
-  if ($action -eq "d" -and $YQCmd) {
-    $type = "inlineyq"
-  }
 
-  # Default Exec Style
-  $ExecStyle = New-Object -TypeName PsObject -Property @{
-    Shell              = "cmd";
-    ShellParams        = "/c";
-    WindowStyle        = "Normal";
-    SleepCmd           = "& timeout /t 60"
-    AdditionalSwitches = @{}
-  }
-
-  switch ($type) {
+  switch -regex ($type) {
     "cmd" {
       # Already handled in default 
     }
     "hcmd" { 
       $ExecStyle.AdditionalSwitches = @{WindowStyle = "Minimized" }
     }
-    "inline" { 
+    "inline.*" { 
       $ExecStyle.shellParams = "/c"; 
-      $ExecStyle.SleepCmd = "";
+      $ExecStyle.SleepCmd = "& echo.";
       $ExecStyle.AdditionalSwitches = @{NoNewWindow = $true; Wait = $true }
     }
     "inlineyq" { 
+      if (!($YQCmd)) { break; }
       $ExecStyle.shellParams = "/c"; 
-      $ExecStyle.SleepCmd = "| yq";
+      $ExecStyle.SleepCmd = "| yq & echo.";
       $ExecStyle.AdditionalSwitches = @{NoNewWindow = $true; Wait = $true }
     }
     "log" {
       $ExecStyle.AdditionalSwitches = @{WindowStyle = "Maximized" };
       $ExecStyle.SleepCmd = "& pause"
     }
-    "logconemu" {
+    "log" {
+      # ConEmu
+      if (!($ConEmuCmd)) { break; }
       $ExecStyle.shell = $ConEmuCmd;
       $ExecStyle.shellParams = "-run";
       $ExecStyle.SleepCmd = "& pause"
@@ -579,7 +794,7 @@ foreach ($sel in $sel) {
   Write-Debug "ExecStyle: $ExecStyle"
   Write-Debug "AdditionalSwitches: $($AdditionalSwitches | Out-String)"
 
-  Start-Process $($ExecStyle.shell) -ArgumentList "$argList " @AdditionalSwitches
+  Start-Process $($ExecStyle.ShellCmd) -ArgumentList "$argList " @AdditionalSwitches
 
   if ($type -eq "inline") {
     Write-Host ''
