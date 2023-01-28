@@ -90,7 +90,7 @@ function Get-SelOptions {
   $SelOptions += New-Object -TypeName PsObject -Property @{
     Category     = "Backend-Services"
     HelpItem     = '[P]OOL-LIST'
-    default      = $true
+    Default      = $true
     MenuIndex    = 1
     Hotkey       = "p"
     ShellArgsMid = 'compute backend-services get-health $($sel.name) --region=$($sel.region) --format=''table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label=''zone'',status.healthStatus.ipAddress,status.healthStatus.healthState)'' --flatten=''status.healthStatus'''
@@ -122,59 +122,9 @@ function Get-SelOptions {
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
     Category     = "Compute"
-    HelpItem     = '[U]PDATE'
-    Hotkey       = "u"
-    ShellArgsMid = 'compute instance-groups managed update-instances --region=$($sel.zone -replace ''..$'') --minimal-action=replace $($sel.''created-by'') --instances=$($sel.name)' # Is this right?
-    ShellType    = "ncmd"
-  }
-
-  $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
-    HelpItem     = '[R]ESET'
-    Hotkey       = "r"
-    ShellArgsMid = 'compute instances reset --zone=$($sel.zone) $($sel.name)'
-    ShellType    = "ncmd"
-  }
-
-  $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
-    HelpItem     = '[P]OWER-OFF'
-    Hotkey       = "p"
-    ShellArgsMid = 'compute instances stop --zone=$($sel.zone) $($sel.name)'
-    ShellType    = "ncmd"
-  }
-
-  $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
-    HelpItem     = '[O]UTPUT-seral-log'
-    MenuIndex    = 4
-    Hotkey       = "o"
-    ShellArgsMid = 'compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)'
-    ShellType    = "log"
-  }
-
-  $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
-    HelpItem     = '[L]OG'
-    MenuHidden   = $true
-    Hotkey       = "l"
-    ShellArgsMid = 'compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)'
-    ShellType    = "log"
-  }
-
-  $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
-    HelpItem     = 'E[X#=cmd]ECUTE'
-    MenuIndex    = 2
-    Hotkey       = "x"
-    ShellArgsMid = 'compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)'
-    ShellType    = "log"
-  }
-
-  $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
     HelpItem     = '[D]ESCRIBE'
     Hotkey       = "d"
+    MenuIndex    = 2
     ShellArgsMid = 'compute instances describe --zone=$($sel.zone) $($sel.name)'
     ShellType    = "inlineyq"
   }
@@ -190,9 +140,20 @@ function Get-SelOptions {
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
     Category     = "Compute"
-    HelpItem     = '[T]AIL-STARTUP'
-    Hotkey       = "t"
-    ShellArgsMid = 'beta logging tail `"resource.type=gce_instance`" --format=`"value(format(''{ 0 }: { 1 }'',resource.labels.instance_id,json_payload.message).sub('':startup-script:'','':''))`"'
+    HelpItem     = 'E[X#=cmd]ECUTE'
+    MenuIndex    = 4
+    Hotkey       = "x"
+    ShellArgsMid = 'compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)'
+    ShellType    = "log"
+  }
+
+  
+  $SelOptions += New-Object -TypeName PsObject -Property @{
+    Category     = "Compute"
+    HelpItem     = '[O]UTPUT-seral-log'
+    MenuIndex    = 5
+    Hotkey       = "o"
+    ShellArgsMid = 'compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)'
     ShellType    = "log"
   }
 
@@ -200,6 +161,7 @@ function Get-SelOptions {
     Category     = "Compute"
     HelpItem     = '[^]UPLOAD'
     Hotkey       = "^"
+    MenuIndex    = 6
     ShellArgsMid = "compute scp $UseInternalIpCmd --zone=$($sel.zone) ${isRecurse} $param $($sel.name):$dst"
     ShellType    = "cmd"
     TaskPrep     = {
@@ -224,6 +186,7 @@ function Get-SelOptions {
     Category     = "Compute"
     HelpItem     = '[v]DOWNLOAD'
     Hotkey       = "v"
+    MenuIndex    = 7
     ShellArgsMid = "compute scp $UseInternalIpCmd $isRecurse --zone=$($sel.zone) $($sel.name):$param $dst"
     ShellType    = "cmd"
     TaskPrep     = {
@@ -242,6 +205,54 @@ function Get-SelOptions {
     }
   }
 
+  $SelOptions += New-Object -TypeName PsObject -Property @{
+    Category     = "Compute"
+    HelpItem     = '[P]OWER-OFF'
+    Hotkey       = "p"
+    MenuIndex    = 8
+    ShellArgsMid = 'compute instances stop --zone=$($sel.zone) $($sel.name)'
+    ShellType    = "ncmd"
+  }
+
+  $SelOptions += New-Object -TypeName PsObject -Property @{
+    Category     = "Compute"
+    HelpItem     = '[R]ESET'
+    Hotkey       = "r"
+    MenuIndex    = 9
+    ShellArgsMid = 'compute instances reset --zone=$($sel.zone) $($sel.name)'
+    ShellType    = "ncmd"
+  }
+
+  $SelOptions += New-Object -TypeName PsObject -Property @{
+    Category     = "Compute"
+    HelpItem     = '[U]PDATE'
+    Hotkey       = "u"
+    MenuIndex    = 10
+    ShellArgsMid = 'compute instance-groups managed update-instances --region=$($sel.zone -replace ''..$'') --minimal-action=replace $($sel.''created-by'') --instances=$($sel.name)' # Is this right?
+    ShellType    = "ncmd"
+  }
+
+  $SelOptions += New-Object -TypeName PsObject -Property @{
+    Category     = "Compute"
+    HelpItem     = '[L]OG'
+    MenuHidden   = $true
+    MenuIndex    = 20
+    Hotkey       = "l"
+    ShellArgsMid = 'compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)'
+    ShellType    = "log"
+  }
+
+  $SelOptions += New-Object -TypeName PsObject -Property @{
+    Category     = "Compute"
+    HelpItem     = '[T]AIL-STARTUP'
+    Hotkey       = "t"
+    MenuIndex    = 20
+    MenuHidden   = $true
+    ShellArgsMid = 'beta logging tail `"resource.type=gce_instance`" --format=`"value(format(''{ 0 }: { 1 }'',resource.labels.instance_id,json_payload.message).sub('':startup-script:'','':''))`"'
+    ShellType    = "log"
+  }
+
+
   ###
   ###  Configurations
   ###
@@ -251,16 +262,38 @@ function Get-SelOptions {
     Default      = $true
     HelpItem     = '[A]CTIVATE'
     Hotkey       = "a"
+    MenuIndex    = 1
     ShellArgsMid = 'config configurations activate $($sel.name)'
     ShellType    = "inline"
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
     Category     = "Configurations"
-    Default      = $true
     HelpItem     = '[C]REATE'
     Hotkey       = "c"
+    MenuIndex    = 2
+    NoSelNeeded  = $true
     ShellArgsMid = 'config configurations create $param'
+    ShellType    = "inline"
+  }
+
+  $SelOptions += New-Object -TypeName PsObject -Property @{
+    Category     = "Configurations"
+    HelpItem     = '[L]IST-PROJECTS'
+    Hotkey       = "l"
+    MenuIndex    = 3
+    NoSelNeeded  = $true
+    ShellArgsMid = 'projects list'
+    ShellType    = "inline"
+  }
+
+  $SelOptions += New-Object -TypeName PsObject -Property @{
+    Category     = "Configurations"
+    Confirm      = $true
+    HelpItem     = 'D[E]LETE'
+    Hotkey       = "e"
+    MenuIndex    = 5
+    ShellArgsMid = 'config configurations delete $($sel.name)'
     ShellType    = "inline"
   }
 
@@ -279,7 +312,7 @@ function Get-SelOptions {
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
     Category     = "Disks"
-    Default      = $true
+    Confirm      = $true
     HelpItem     = 'D[E]LETE'
     Hotkey       = "e"
     ShellArgsMid = 'compute disks describe --$($sel.lscope)=$($sel.location) $($sel.name)'
@@ -288,7 +321,6 @@ function Get-SelOptions {
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
     Category     = "Disks"
-    Default      = $true
     HelpItem     = '[S]NAPSHOT'
     Hotkey       = "s"
     ShellArgsMid = 'compute disks snapshot --$($sel.lscope)=$($sel.location) $($sel.name) --snapshot-names=ps-gcloud-$(Get-Date -Format ''yyyyMMdd-HHmmss'')-$($sel.name)'
@@ -297,7 +329,6 @@ function Get-SelOptions {
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
     Category     = "Disks"
-    Default      = $true
     HelpItem     = 'DE[T]ACH'
     Hotkey       = "t"
     ShellArgsMid = 'compute instances detach-disk `"projects/$($sel.tmpUser)`" --disk-scope=$dscope `"--disk=$($sel.tmpSelfLink)`"'
@@ -314,7 +345,6 @@ function Get-SelOptions {
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
     Category     = "Disks"
-    Default      = $true
     HelpItem     = '[A]TTACH'
     Hotkey       = "a"
     ShellArgsMid = 'compute instances attach-disk `"$($param)`" --disk-scope=$dscope `"--disk=$($sel.tmpSelfLink)`"'
@@ -425,6 +455,7 @@ function Get-SelOptions {
     Category     = "MIG"
     HelpItem     = '[D]ESCRIBE'
     Hotkey       = "d"
+    MenuIndex    = 1
     ShellArgsMid = 'compute instance-groups managed describe $($sel.name) --region=$($sel.location)'
     ShellType    = "inlineyq"
   }
@@ -433,6 +464,7 @@ function Get-SelOptions {
     Category     = "MIG"
     HelpItem     = '[R#=#]ESIZE'
     Hotkey       = "r"
+    MenuIndex    = 2
     ShellArgsMid = 'compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)'
     ShellType    = "cmd"
   }
@@ -441,6 +473,7 @@ function Get-SelOptions {
     Category     = "MIG"
     HelpItem     = '[U]PDATE'
     Hotkey       = "u"
+    MenuIndex    = 3
     ShellArgsMid = 'compute instance-groups managed rolling-action replace $($sel.name) --region=$($sel.location)'
     ShellType    = "cmd"
   }
@@ -449,6 +482,7 @@ function Get-SelOptions {
     Category     = "MIG"
     HelpItem     = '[C]LEAR-AUTOHEAL'
     Hotkey       = "c"
+    MenuIndex    = 4
     ShellArgsMid = 'compute instance-groups managed update --clear-autohealing  $($sel.name) --region=$($sel.location)'
     ShellType    = "cmd"
   }
@@ -519,6 +553,7 @@ function Get-SelOptions {
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
     Category     = "SQL"
+    Confirm      = $true
     HelpItem     = 'D[E]LETE'
     Hotkey       = "e"
     ShellArgsMid = 'sql instances delete $($sel.name)'
@@ -623,12 +658,20 @@ function Show-Menu {
   param(
     $LoadOptions,
     $SelOptions,
-    $Answer
+    $Answer,
+    ${SelfLink}
   )
 
-  $instructions = ($SelOptions | Sort-Object -Property MenuIndex | Select-Object -ExpandProperty HelpItem) -join '   '
+  $SelfLinkOpts = ''
+  if ($SelfLink -eq $true) {
+    $SelfLinkOpts = ',selfLink.scope(v1):label=self_link'
+  }
+
+
+  $instructions = ($SelOptions | Where-Object MenuHidden -ne $true | Sort-Object -Property MenuIndex | Select-Object -ExpandProperty HelpItem) -join '   '
 
   do {
+    $LoadOptions.LoadCmd = $ExecutionContext.InvokeCommand.ExpandString($LoadOptions.LoadCmd)
     $output = $(Invoke-Expression $LoadOptions.LoadCmd)
     if ($LASTEXITCODE -ne 0) {
       $Raise_Error = "Error running gcloud command"; Throw $Raise_Error
@@ -686,10 +729,11 @@ function ConfigurationsActivateWildcard {
     [string]$Wildcard
   )
 
+  Write-Debug '[ConfigurationsActivateWildcard]: Start'
   # Search by configuration name or project id
   [array]$sel = $Menu | Where-Object { ($_.name -like "*$Wildcard*") -or ($_.project -like "*$Wildcard*") }
   if ($sel.Count -eq 1) {
-    return $sel
+    return @{ Selections = $sel }
   }
   if ($sel.Count -gt 1) {
     $Raise_Error = "Filter *$Wildcard* found more than one matching configurations, please narrow." ; Throw $Raise_Error
@@ -704,11 +748,14 @@ function ConfigurationsActivateWildcard {
     $Raise_Error = "Filter *$Wildcard* found more than one matching projects, please narrow." ; Throw $Raise_Error
   }
 
+  Selections = [array]$Menu | Where-Object project -eq $projects.projectId
+
+  Write-Debug "[ConfigurationsActivateWildcard]: Finished, project found: $Selections."
   return @{
     Action     = 'a'
     SelIndex   = $null
     Param      = $null
-    Selections = [array]$Menu | Where-Object project -eq $projects.projectId
+    Selections = $Selections
     SelCount   = 1
   }
 
@@ -799,7 +846,7 @@ function DisplaySelectionsAndConfirm {
   if (${Show-Command} -eq $true) {
     return
   }
-  if ($Answers.SelCount -eq 0) {
+  if ($Answers.SelCount -lt 1) {
     return
   }
   elseif ($Answers.SelCount -eq 1) {
@@ -822,7 +869,7 @@ function Parse-Answer {
     [Parameter(Mandatory = $true)][string]$Answer
   )
 
-  if ($ResourceType -eq 'Configurations' -and $Answer -notmatch '^\d+$' -and $Answer -notmatch '^c=.*') {
+  if ($ResourceType -eq 'Configurations' -and $Answer -notmatch '^[a-z]?\d+$' -and $Answer -notmatch '^[a-z]?(:[a-z0-9-_]+)?$' -and $Answer -notmatch '^c=.*') {
     [array]$Answers = ConfigurationsActivateWildcard -Menu $instances -Wildcard $Answer
   }
   else {
@@ -848,7 +895,7 @@ function Find-SelAction {
   )
 
   Write-Debug "[Find-SelAction] Selections.Action= ``$($Selections.Action | Out-String)``"
-  if ($null -eq $Selections.Action) {
+  if ([string]::IsNullOrEmpty($Selections.Action)) {
     $Action = $SelOptions | Where-Object Default -eq $true
     if ($null -eq $Action) {
       $Raise_Error = "No default action defined for ``$ResourceType``." ; Throw $Raise_Error     
@@ -895,6 +942,7 @@ function Invoke-Selections {
     $YQCmd = $null
   }
 
+  $UseInternalIpCmd = $(DetectUseInternalIpSsh -Switch $UseInternalIpSsh  ).Cmd
 
   $ExecStyle = New-Object -TypeName PsObject -Property @{
     ShellCmd           = "cmd";
@@ -970,3 +1018,36 @@ function Invoke-Selections {
   }
 }
 
+
+function Get-EnvPathsArr {
+  Param([ValidateSet('User', 'Machine', 'All')]$Scope = 'All')
+
+  $Paths = @() 
+  if ( @('Machine', 'All') -icontains $Scope) {
+    $Paths += `
+      [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine).Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
+  }
+ 
+  if ( @('User', 'All') -icontains $Scope) {
+    $Paths += `
+      [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User).Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
+  }
+
+  return $Paths
+}
+
+function Install-Script {
+  if (Get-EnvPathsArr('All') -notcontains $PSScriptRoot) {
+    Write-Output 'INSTALL: Adding script location to %PATH% as user env var...'
+  
+    [Environment]::SetEnvironmentVariable("Path", "$((Get-EnvPathsArr('User')) -join ';');$PSScriptRoot", [System.EnvironmentVariableTarget]::User)
+  }
+  
+  if ($env:Path -split ';' -notcontains $PSScriptRoot) {
+    Write-Output 'INSTALL: Refreshing %PATH% in current shell...'
+    $env:Path = "$PSScriptRoot;$env:Path"
+  }
+  else {
+    Write-Output 'INSTALL: $PSScriptRoot already in %PATH%'
+  }
+}
