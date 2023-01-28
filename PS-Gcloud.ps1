@@ -47,7 +47,7 @@
 #>
 
 param(
-  [Parameter()][ValidateSet('Backend-Services', 'Compute', 'Configurations', 'Disks', 'Firewall', 'MIG', 'Snapshots', 'SQL', 'Storage')][string[]]$ResourceType,
+  [Parameter()][ValidateSet('Backend-Services', 'Compute', 'Configurations', 'Disks', 'Firewall', 'MIG', 'Snapshots', 'SQL', 'Storage')][string]$ResourceType,
   [nullable[bool]]$UseInternalIpSsh,
   [Parameter(Position = 0)][string]$Answer,
   [Switch]$Install,
@@ -117,20 +117,19 @@ $ResourceTypes = @('Backend-Services', 'Compute', 'Configurations', 'Disks', 'Fi
 $SelfLink = $SelfLink -or $Uri
 
 # Shorthand ResourceType switch validation
-if ($null -eq $ResourceType) {
+if ([string]::IsNullOrEmpty($ResourceType)) {
   foreach ($rt in $ResourceTypes) {
     # Dynamically check if the switches are present
     $rtval = Invoke-Expression "`${$rt}"
     if ($rtval -eq $true) {
-      [string]$ResourceType = $rt
+      $ResourceType = $rt
       break
     }
   }
-  if ($null -eq $ResourceType) {
+  if ([string]::IsNullOrEmpty($ResourceType)) {
     $ResourceType = 'Compute'
   }
 }
-
 
 . .\PS-Gcloud-Actions.ps1
 

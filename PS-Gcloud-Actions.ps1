@@ -768,7 +768,7 @@ function ExtractAnswersByIndex {
     [array]$Menu
   )
   Write-Debug "[ExtractAnswersByIndex] Answer= ``$Answer``"
-  $Answers = Select-String -InputObject $Answer -Pattern '^([a-z\^]{1})?((\d{1,3}))?(=(.+))?$' | Select-Object -ExpandProperty Matches | Select-Object -ExpandProperty Groups | Select-Object -ExpandProperty Value
+  [array]$Answers = Select-String -InputObject $Answer -Pattern '^([a-z\^]{1})?((\d{1,3}))?(=(.+))?$' | Select-Object -ExpandProperty Matches | Select-Object -ExpandProperty Groups | Select-Object -ExpandProperty Value
 
   if ($null -eq $Answers) {
     return $null
@@ -793,7 +793,7 @@ function ExtractAnswersByWildcard {
     [array]$Menu
   )
   Write-Debug "[ExtractAnswersByWildcard] Answer= ``$Answer``"
-  $Answers = Select-String -InputObject $Answer -Pattern '^([a-z]{1})?(:([\da-z\-\*]+))?(=(.+))?$' | Select-Object -ExpandProperty Matches | Select-Object -ExpandProperty Groups | Select-Object -ExpandProperty Value
+  [array]$Answers = Select-String -InputObject $Answer -Pattern '^([a-z]{1})?(:([\da-z\-\*]+))?(=(.+))?$' | Select-Object -ExpandProperty Matches | Select-Object -ExpandProperty Groups | Select-Object -ExpandProperty Value
 
   if ($null -eq $Answers) {
     Write-Debug "[ExtractAnswersByWildcard] Pattern not matched ``$Answer``"
