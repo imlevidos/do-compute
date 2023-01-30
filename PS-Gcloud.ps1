@@ -104,7 +104,8 @@ $vms = .\PS-Gcloud.ps1 -ReturnAs-Object     # Returns the initial resource listi
 }
 
 if ($HelpFull) {
-  Get-Help .\PS-Gcloud.ps1 -Full
+  $MyScript = $MyInvocation.MyCommand.Source
+  Get-Help $MyScript -Full
   return
 }
 
@@ -131,7 +132,7 @@ if ([string]::IsNullOrEmpty($ResourceType)) {
   }
 }
 
-. .\PS-Gcloud-Actions.ps1
+. $PSScriptRoot/PS-GcloudHelper.ps1
 
 $LoadOptions = Get-LoadOptions -ResourceType $ResourceType
 $SelOptions = Get-SelOptions -ResourceType $ResourceType
