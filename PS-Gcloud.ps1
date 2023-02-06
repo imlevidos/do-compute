@@ -132,7 +132,7 @@ if ([string]::IsNullOrEmpty($ResourceType)) {
   }
 }
 
-. $PSScriptRoot/PS-GcloudHelper.ps1
+. $PSScriptRoot/_PSGcloudHelper.ps1
 
 $LoadOptions = Get-LoadOptions -ResourceType $ResourceType
 $SelOptions = Get-SelOptions -ResourceType $ResourceType
