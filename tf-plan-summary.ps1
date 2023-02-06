@@ -9,7 +9,8 @@ param(
   [Parameter(Position = 0)][string]$Logfile = '.\tfplans\tf-plan.log',
   [Parameter()][ValidateSet('Text', 'Object')][string[]]$OutputType = 'Text',
   [Parameter()][string]$Grep = '',
-  [Switch]$RefreshPlan
+  [Switch]$RefreshPlan,
+  [string]$TerraformPath = 'tf'
 )
 
 $LogFolder = Split-Path $LogFile -Parent
