@@ -6,17 +6,17 @@ param(
 
 $actionVerb = ''
 $installPaths = @(
-	"$PSScriptRoot",
-	"$PSScriptRoot\sysinternals",
-	"$PSScriptRoot\Hashicorp",
-	"$PSScriptRoot\google-cloud-sdk\bin",
-	"$PSScriptRoot\Notepad++",
-	"$PSScriptRoot\PuTTY",
-	"$PSScriptRoot\GitBashPortable",
-	"$PSScriptRoot\GitBashPortable\bin",
-	"$PSScriptRoot\GitBashPortable\mingw64\bin",
-	"$PSScriptRoot\GitBashPortable\usr\bin",
-	"$PSScriptRoot\ffmpeg\bin"
+	# "$PSScriptRoot",
+	# "$PSScriptRoot\sysinternals",
+	# "$PSScriptRoot\Hashicorp",
+	# "$PSScriptRoot\google-cloud-sdk\bin",
+	# "$PSScriptRoot\Notepad++",
+	# "$PSScriptRoot\PuTTY",
+	# "$PSScriptRoot\GitBashPortable",
+	# "$PSScriptRoot\GitBashPortable\bin",
+	# "$PSScriptRoot\GitBashPortable\mingw64\bin",
+	# "$PSScriptRoot\GitBashPortable\usr\bin",
+	# "$PSScriptRoot\ffmpeg\bin"
 )
 
 
