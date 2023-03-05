@@ -1,6 +1,32 @@
+<#
+  .SYNOPSIS
+  Script for monitoring Winamp in the background, and if playback has been paused/stopped for `$FlushAfterSeconds`, it will restart Winamp, to get the Media Library written to disk.
+  .DESCRIPTION
+  The WinAmp Media Library database is only saved when Winamp is closed. If Winamp has been open for a long time (I sometimes have it for days), and later the app crashes, all those changes will be lost.
+  This script keeps monitoring Winamp in the background, using the Windows API, and if the plaback is paused/stopped for `$FlushAfterSeconds`, the app will be restarted. Playback will be skeed to the same position from before the app restart.
+
+  .PARAMETER FlushAfterSeconds
+  The number of seconds to wait before restarting Winamp, if playback has been paused/stopped. Default is 300 seconds (5 minutes).
+  This is only counted from the moment when the playback was stopped.
+  When a song is playing no action will be taken, and the timer will be reset.
+
+  .PARAMETER LogLevel
+  The level of logging to write to the Log file. Default is 'Information'.
+  Valid values are: 'Verbose', 'Debug', 'Information'
+
+  .PARAMETER Install [CurrentUser|AllUsers]
+  Install the script as a Windows Scheduled Task, to run at startup.
+  AllUsers requires the script to be run as Administrator (although the Scheduled task will be started as limited privileges, as `BUILTIN\Users`).
+  A detailed Log file is written to `%TEMP%\Start-WinampAutoFlush.ps1-%TIMESTAMP%.log`
+  **CAVEATS**: Stopping the Scheduled Task doesn't also kill the running PowerShell script; You'll have to kill it manually using the Task manager.
+
+  .PARAMETER Uninstall
+  Remove the previously created Windows Scheduled Task
+#>
 param(
   [int]$FlushAfterSeconds = 300,
-  [switch]$Install,
+  [Parameter()][ValidateSet('Verbose', 'Debug', 'Information')][string]$LogLevel = 'Information',
+  [Parameter()][ValidateSet('CurrentUser', 'AllUsers')]$Install = $null,
   [switch]$Uninstall
 )
 
@@ -38,6 +64,9 @@ function Register-PowerShellScheduledTask {
     [hashtable]$Parameters = @{},
     [string]$TaskName,
     [bool]$AllowRunningOnBatteries = $true,
+    [switch]$DisallowHardTerminate,
+    [TimeSpan]$ExecutionTimeLimit, # PT72H, PT15M, PT30S etc. PT0S = disabled.
+    [string]$GroupId,
     [switch]$Uninstall
   )
 
@@ -61,7 +90,12 @@ function Register-PowerShellScheduledTask {
   # Create wrapper vbs script so we can run the PowerShell script as hidden
   # https://github.com/PowerShell/PowerShell/issues/3028
 
-  $vbsPath = "$env:LOCALAPPDATA\PsScheduledTasks\$TaskName.vbs"
+  if ($GroupId) {
+    $vbsPath = "$env:ALLUSERSPROFILE\PsScheduledTasks\$TaskName.vbs"
+  }
+  else {
+    $vbsPath = "$env:LOCALAPPDATA\PsScheduledTasks\$TaskName.vbs"
+  }
   $vbsDir = Split-Path $vbsPath -Parent
 
   if (!(Test-Path $vbsDir)) {
@@ -93,31 +127,43 @@ shell.Run command, 0, true
   $t1.Repetition = $t2.Repetition
     
 
+  ## GroupId
+
+  $PrincipalConf = @{}
+  if ($GroupId) {
+    $STPrin = New-ScheduledTaskPrincipal -GroupId $GroupId
+    $PrincipalConf = @{
+      "Principal" = $STPrin
+    }
+  }
+
   ## Settings 
+  $AdditionalSettings = @{}
 
   if ($AllowRunningOnBatteries) {
-    $BatteriesParams = switch ($AllowRunningOnBatteries) {
-      $false { @{} }
-      $true {
-        @{
-          "AllowStartIfOnBatteries"    = $null;
-          "DontStopIfGoingOnBatteries" = $null
-        } 
-      }
-    }
+    $AdditionalSettings.AllowStartIfOnBatteries = $true
+    $AdditionalSettings.DontStopIfGoingOnBatteries = $true
+  }
+
+  if ($DisallowHardTerminate) {
+    $AdditionalSettings.DisallowHardTerminate = $true
+  }
+
+  if ($ExecutionTimeLimit) {
+    $AdditionalSettings.ExecutionTimeLimit = $ExecutionTimeLimit
   }
 
   $STSet = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
-    @BatteriesParams
+    @AdditionalSettings
 
   ## Register / Update
 
   if (!$TaskExists) {
-    Register-ScheduledTask -Action $action -Trigger $t1 -TaskName $TaskName -Description "Scheduled Task for running $ScriptPath" -Settings $STSet
+    Register-ScheduledTask -Action $action -Trigger $t1 -TaskName $TaskName -Description "Scheduled Task for running $ScriptPath" -Settings $STSet @PrincipalConf
   }
   else {
-    Set-ScheduledTask -TaskName $TaskName -Action $action -Trigger $t1 -Settings $STSet
+    Set-ScheduledTask -TaskName $TaskName -Action $action -Trigger $t1 -Settings $STSet @PrincipalConf
   }
 }
 
@@ -137,7 +183,6 @@ $window.SendMessage(0x0400,0,104)
 source: https://github.com/sergueik/powershell_selenium/blob/master/powershell/button_selenium.ps1
 ref: http://www.codeproject.com/Articles/790966/Hosting-And-Changing-Controls-In-Other-Application
 #>
-
 Add-Type -TypeDefinition @"
 using System.Diagnostics;
 using System.Drawing;
@@ -2886,14 +2931,31 @@ namespace System.Windows
 "@ -ReferencedAssemblies 'System.Windows.Forms.dll', 'System.Drawing.dll', 'Microsoft.CSharp.dll' , 'System.Xml.Linq.dll', 'System.Xml.dll'
 #Endregion
 
-$DebugPreference = 'Continue'
-$VerbosePreference = 'Continue'
+$LogLevels = @{
+  "Error"       = 1
+  "Warning"     = 2
+  "Information" = 3
+  "Debug"       = 4
+  "Verbose"     = 5
+}
+$LogLevelv = $LogLevels.$LogLevel
+
+switch ($LogLevelv) {
+  { $_ -ge 3 } { $InformationPreference = 'SilentlyContinue' } # PS 5.1 Bug: https://stackoverflow.com/questions/55191548/write-information-does-not-show-in-a-file-transcribed-by-start-transcript
+  { $_ -ge 4 } { $DebugPreference = 'Continue' }
+  { $_ -ge 5 } { $VerbosePreference = 'Continue' }
+}
 
 if ($Install) {
   $ps = @{
-    FlushAfterSeconds=$FlushAfterSeconds
+    FlushAfterSeconds = $FlushAfterSeconds
+    LogLevel          = $LogLevel
   }
-  Register-PowerShellScheduledTask -ScriptPath $MyScript -AllowRunningOnBatteries $true -Parameters $ps
+  $SchTaskGroupSett = @{}
+  if ($Install -eq 'AllUsers') {
+    $SchTaskGroupSett.GroupId = 'BUILTIN\Users'
+  }
+  Register-PowerShellScheduledTask -ScriptPath $MyScript -AllowRunningOnBatteries $true @SchTaskGroupSett -Parameters $ps -DisallowHardTerminate -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
   return
 }
 
@@ -2903,9 +2965,8 @@ if ($Uninstall) {
 }
 
 Start-Transcript -Path $LogPath -append
-$InformationPreference = 'Continue'
-Logger -LogLevel Information -Message "Starting WinampAutoFlush."
-
+Logger -LogLevel Information -Message "Starting WinampAutoFlush. LogLevel: $LogLevel"
+Logger -LogLevel Information -Message "Winamp will be restarted after $FlushAfterSeconds seconds of inactivity."
 
 function Get-WinampStatus {
   param(
@@ -2914,7 +2975,7 @@ function Get-WinampStatus {
   $playStatus = $window.SendMessage(0x0400, 0, 104) # 0: stopped, 1: playing, 3: paused
   $SeekPosMS = $window.SendMessage(0x0400, 0, 105)
 
-  $status = "$($window.hWnd);$playStatus;$SeekPosMS"
+  $status = "$($window.hWnd); $playStatus; $SeekPosMS"
   return @{
     hWnd        = $window.hWnd
     PlayStatus  = $playStatus
@@ -2937,7 +2998,7 @@ function Restart-Winamp {
   $SeekPosMS = $window.SendMessage($WM_USER, 0, 105)
   Logger -LogLevel Debug "Winamp: hWnd: $($window.hWnd), PlayStatus: $playStatus, SeekPos: $SeekPosMS"
 
-  Logger -LogLevel Debug "Restarting Winamp.."
+  Logger -LogLevel Information "RESTARTING Winamp.."
   $window.SendMessage($WM_USER, 0, 135) | Out-Null
 
   while ($true) {
@@ -2979,7 +3040,7 @@ $PlayStoppedCheck = $null
 Logger -LogLevel Debug "INIT: Winamp will be restarted after $FlushAfterSeconds seconds of inactivity."
 
 while ($true) {
-  Start-Sleep -Seconds ([int]($FlushAfterSeconds/5))
+  Start-Sleep -Seconds ([int]($FlushAfterSeconds / 5))
 
   if (!(Get-Process "winamp" -ErrorAction SilentlyContinue)) {
     Logger -LogLevel Verbose "Winamp not started."
@@ -3027,7 +3088,7 @@ while ($true) {
   Logger -LogLevel Debug "Winamp stopped for $StoppedForSeconds seconds."
 
   if ($StoppedForSeconds -gt $FlushAfterSeconds) {
-    Logger -LogLevel Debug "Winamp stopped for 5 minutes, restarting."
+    Logger -LogLevel Debug "Winamp stopped for $FlushAfterSeconds seconds, restarting."
     Restart-Winamp -Window $window
     $window = [System.Windows.Win32Window]::FromProcessName("winamp")
     $status = Get-WinampStatus -Window $window
