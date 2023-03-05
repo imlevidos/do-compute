@@ -1,6 +1,7 @@
 <#
   .SYNOPSIS
   Script for monitoring Winamp in the background, and if playback has been paused/stopped for `$FlushAfterSeconds`, it will restart Winamp, to get the Media Library written to disk.
+  
   .DESCRIPTION
   The WinAmp Media Library database is only saved when Winamp is closed. If Winamp has been open for a long time (I sometimes have it for days), and later the app crashes, all those changes will be lost.
   This script keeps monitoring Winamp in the background, using the Windows API, and if the plaback is paused/stopped for `$FlushAfterSeconds`, the app will be restarted. Playback will be skeed to the same position from before the app restart.
