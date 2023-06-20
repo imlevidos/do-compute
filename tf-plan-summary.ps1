@@ -10,6 +10,7 @@ param(
   [Parameter()][ValidateSet('Text', 'Object')][string[]]$OutputType = 'Text',
   [Parameter()][string]$Grep = '',
   [Switch]$RefreshPlan,
+	[Switch]$SkipRefreshResources,
   [string]$TerraformPath = 'tf'
 )
 
@@ -31,10 +32,14 @@ if ($RefreshPlan) {
   }
 }
 
+if ($SkipRefreshResources) {
+	$SkipRefreshCmd = '-refresh=false'
+}
+
 if (!(Test-Path $LogFile)) {
   if ($RefreshPlan) { $UpdatedMsg = 'updated ' } else { $UpdatedMsg = '' }
   Write-Output "Generating $($UpdatedMsg)terraform plan..."
-  &tf plan -no-color > "$LogFile"
+  &$TerraformPath plan $SkipRefreshCmd -no-color > "$LogFile"
 
   if ($LASTEXITCODE -ne 0) {
     $Raise_Error = "Error executing Terraform Plan."; Throw $Raise_Error

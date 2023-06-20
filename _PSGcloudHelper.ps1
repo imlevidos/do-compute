@@ -6,55 +6,55 @@ function Get-LoadOptions {
   $LoadOptions = @()
 
   $LoadOptions += New-Object -TypeName PsObject -Property @{
-    Category  = "Compute"
+    Category  = 'Compute'
     LoadCmd   = 'gcloud compute instances list --format=''csv(name,zone,MACHINE_TYPE,INTERNAL_IP,EXTERNAL_IP,status,metadata.items[created-by].scope(instanceGroupManagers),id,networkInterfaces[0].subnetwork.scope(regions).segment(0):label=tmpregion,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'''
     Transform = 'Sort-Object -Property tmpregion, created-by, CreatedTime'
   }
 
   $LoadOptions += New-Object -TypeName PsObject -Property @{
-    Category  = "Disks"
+    Category  = 'Disks'
     LoadCmd   = 'gcloud compute disks list --format=''csv(name,LOCATION:sort=1,LOCATION_SCOPE:label=lscope,SIZE_GB,TYPE,status,users[0].scope(instances),users[0].scope(projects):label=tmpUser,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime,selfLink:label=tmpSelfLink${SelfLinkOpts})'''
     Transform = $null
   }
 
   $LoadOptions += New-Object -TypeName PsObject -Property @{
-    Category  = "MIG"
+    Category  = 'MIG'
     LoadCmd   = 'gcloud compute instance-groups managed list --format=''csv(name,LOCATION,size,autoHealingPolicies[0].healthCheck.scope(healthChecks):label=''autoheal_hc'',creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'''
     Transform = $null
   }
 
   $LoadOptions += New-Object -TypeName PsObject -Property @{
-    Category  = "Backend-Services"
+    Category  = 'Backend-Services'
     LoadCmd   = 'gcloud compute backend-services list --format=''csv(name,region.scope(regions),backends[0].group.scope(instanceGroups),creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'''
     Transform = $null
   }
 
   $LoadOptions += New-Object -TypeName PsObject -Property @{
-    Category  = "Configurations"
+    Category  = 'Configurations'
     LoadCmd   = 'gcloud config configurations list --format=''csv(name,is_active,ACCOUNT,PROJECT)'''
     Transform = $null
   }  
 
   $LoadOptions += New-Object -TypeName PsObject -Property @{
-    Category  = "Snapshots"
+    Category  = 'Snapshots'
     LoadCmd   = 'gcloud compute snapshots list --format=''csv(name,disk_size_gb,SRC_DISK,status,storageBytes,storageLocations,creationTimestamp.date(%Y-%m-%d %H:%M:%S):label=CreatedTime$SelfLinkOpts)'''
     Transform = $null
   }  
 
   $LoadOptions += New-Object -TypeName PsObject -Property @{
-    Category  = "SQL"
+    Category  = 'SQL'
     LoadCmd   = 'gcloud sql instances list --format=''csv(name:sort=1,database_version,gceZone:label=''location'',settings.availabilityType,settings.tier,ipAddresses[0].ipAddress,state,settings.dataDiskType:label=disk_type,settings.dataDiskSizeGb:label=disk_size,region:label=tmpregion,createTime.date(%Y-%m-%d %H:%M:%S)$SelfLinkOpts)'''
     Transform = $null
   }
 
   $LoadOptions += New-Object -TypeName PsObject -Property @{
-    Category  = "Storage"
+    Category  = 'Storage'
     LoadCmd   = 'gcloud storage buckets list --format=''csv(name:sort=1,location.lower(),storageClass.lower(),timeCreated.date(%Y-%m-%d %H:%M:%S),updated.date(%Y-%m-%d %H:%M:%S),iamConfiguration.uniformBucketLevelAccess.enabled:label=''uniformBLA''$SelfLinkOpts)'''
     Transform = $null
   }
 
   $LoadOptions += New-Object -TypeName PsObject -Property @{
-    Category  = "Firewall"
+    Category  = 'Firewall'
     LoadCmd   = 'gcloud compute firewall-rules list --format=''csv(network.scope(networks):sort=1,name:sort=2,disabled,direction,priority,sourceRanges,destinationRanges,sourceTags,targetTags,logConfig.enable.lower():label=''logging''$SelfLinkOpts)'''
     Transform = $null
   }
@@ -75,12 +75,12 @@ function Get-SelOptions {
   ###  
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = ".*"
+    Category     = '.*'
     HelpItem     = '[Q]UIT'
     MenuIndex    = 1000
-    Regex        = ".*:q$"
-    ShellArgsMid = ""
-    ShellType    = "quit"
+    Regex        = '.*:q$'
+    ShellArgsMid = ''
+    ShellType    = 'quit'
   }
 
   ###
@@ -88,22 +88,22 @@ function Get-SelOptions {
   ###
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Backend-Services"
+    Category     = 'Backend-Services'
     HelpItem     = '[P]OOL-LIST'
     Default      = $true
     MenuIndex    = 1
-    Hotkey       = "p"
+    Hotkey       = 'p'
     ShellArgsMid = 'compute backend-services get-health $($sel.name) --region=$($sel.region) --format=''table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label=''zone'',status.healthStatus.ipAddress,status.healthStatus.healthState)'' --flatten=''status.healthStatus'''
-    ShellType    = "inline"
+    ShellType    = 'inline'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Backend-Services"
+    Category     = 'Backend-Services'
     HelpItem     = '[D]ESCRIBE'
     MenuIndex    = 2
-    Hotkey       = "d"
+    Hotkey       = 'd'
     ShellArgsMid = 'compute backend-services get-health $($sel.name) --region=$($sel.region) --format=''table(status.healthStatus.instance.scope(instances),status.healthStatus.instance.scope(zones).segment(0):label=''zone'',status.healthStatus.ipAddress,status.healthStatus.healthState)'' --flatten=''status.healthStatus'''
-    ShellType    = "inlineyq"
+    ShellType    = 'inlineyq'
   }
 
   ###
@@ -111,59 +111,59 @@ function Get-SelOptions {
   ###  
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
+    Category     = 'Compute'
     Default      = $true
     MenuIndex    = 1
     HelpItem     = '[S]SH'
-    Hotkey       = "s"
+    Hotkey       = 's'
     ShellArgsMid = 'compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name)'
-    ShellType    = "hcmd"
+    ShellType    = 'hcmd'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
+    Category     = 'Compute'
     HelpItem     = '[D]ESCRIBE'
-    Hotkey       = "d"
+    Hotkey       = 'd'
     MenuIndex    = 2
     ShellArgsMid = 'compute instances describe --zone=$($sel.zone) $($sel.name)'
-    ShellType    = "inlineyq"
+    ShellType    = 'inlineyq'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
+    Category     = 'Compute'
     HelpItem     = '[C#=cmd]-INLINE'
     MenuIndex    = 3
-    Hotkey       = "c"
+    Hotkey       = 'c'
     ShellArgsMid = 'compute ssh $UseInternalIpCmd --zone=$($sel.zone) $($sel.name) --command `"$($param)`"'
-    ShellType    = "inline"
+    ShellType    = 'inline'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
+    Category     = 'Compute'
     HelpItem     = 'E[X#=cmd]ECUTE'
     MenuIndex    = 4
-    Hotkey       = "x"
+    Hotkey       = 'x'
     ShellArgsMid = 'compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)'
-    ShellType    = "log"
+    ShellType    = 'log'
   }
 
   
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
+    Category     = 'Compute'
     HelpItem     = '[O]UTPUT-seral-log'
     MenuIndex    = 5
-    Hotkey       = "o"
+    Hotkey       = 'o'
     ShellArgsMid = 'compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)'
-    ShellType    = "log"
+    ShellType    = 'log'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
+    Category     = 'Compute'
     HelpItem     = '[^]UPLOAD'
-    Hotkey       = "^"
+    Hotkey       = '^'
     MenuIndex    = 6
     ShellArgsMid = "compute scp $UseInternalIpCmd --zone=$($sel.zone) ${isRecurse} $param $($sel.name):$dst"
-    ShellType    = "cmd"
+    ShellType    = 'cmd'
     TaskPrep     = {
       if (!(Test-Path $param)) {
         $Raise_Error = "File or folder ``$param`` not found." ; Throw $Raise_Error     
@@ -183,12 +183,12 @@ function Get-SelOptions {
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
+    Category     = 'Compute'
     HelpItem     = '[v]DOWNLOAD'
-    Hotkey       = "v"
+    Hotkey       = 'v'
     MenuIndex    = 7
     ShellArgsMid = "compute scp $UseInternalIpCmd $isRecurse --zone=$($sel.zone) $($sel.name):$param $dst"
-    ShellType    = "cmd"
+    ShellType    = 'cmd'
     TaskPrep     = {
       $dst = "$($sel.name)-$(Split-Path $param -Leaf)-$(Get-Date -Format 'yyMMdd-HHmmss')"
       if ($param[-1] -eq '/') {
@@ -206,50 +206,50 @@ function Get-SelOptions {
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
+    Category     = 'Compute'
     HelpItem     = '[P]OWER-OFF'
-    Hotkey       = "p"
+    Hotkey       = 'p'
     MenuIndex    = 8
     ShellArgsMid = 'compute instances stop --zone=$($sel.zone) $($sel.name)'
-    ShellType    = "ncmd"
+    ShellType    = 'ncmd'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
+    Category     = 'Compute'
     HelpItem     = '[R]ESET'
-    Hotkey       = "r"
+    Hotkey       = 'r'
     MenuIndex    = 9
     ShellArgsMid = 'compute instances reset --zone=$($sel.zone) $($sel.name)'
-    ShellType    = "ncmd"
+    ShellType    = 'ncmd'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
+    Category     = 'Compute'
     HelpItem     = '[U]PDATE'
-    Hotkey       = "u"
+    Hotkey       = 'u'
     MenuIndex    = 10
     ShellArgsMid = 'compute instance-groups managed update-instances --region=$($sel.zone -replace ''..$'') --minimal-action=replace $($sel.''created-by'') --instances=$($sel.name)' # Is this right?
-    ShellType    = "ncmd"
+    ShellType    = 'ncmd'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
+    Category     = 'Compute'
     HelpItem     = '[L]OG'
     MenuHidden   = $true
     MenuIndex    = 20
-    Hotkey       = "l"
+    Hotkey       = 'l'
     ShellArgsMid = 'compute instances get-serial-port-output --zone=$($sel.zone) $($sel.name)'
-    ShellType    = "log"
+    ShellType    = 'log'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Compute"
+    Category     = 'Compute'
     HelpItem     = '[T]AIL-STARTUP'
-    Hotkey       = "t"
+    Hotkey       = 't'
     MenuIndex    = 20
     MenuHidden   = $true
     ShellArgsMid = 'beta logging tail `"resource.type=gce_instance`" --format=`"value(format(''{ 0 }: { 1 }'',resource.labels.instance_id,json_payload.message).sub('':startup-script:'','':''))`"'
-    ShellType    = "log"
+    ShellType    = 'log'
   }
 
 
@@ -258,43 +258,43 @@ function Get-SelOptions {
   ###
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Configurations"
+    Category     = 'Configurations'
     Default      = $true
     HelpItem     = '[A]CTIVATE'
-    Hotkey       = "a"
+    Hotkey       = 'a'
     MenuIndex    = 1
     ShellArgsMid = 'config configurations activate $($sel.name)'
-    ShellType    = "inline"
+    ShellType    = 'inline'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Configurations"
+    Category     = 'Configurations'
     HelpItem     = '[C]REATE'
-    Hotkey       = "c"
+    Hotkey       = 'c'
     MenuIndex    = 2
     NoSelNeeded  = $true
     ShellArgsMid = 'config configurations create $param'
-    ShellType    = "inline"
+    ShellType    = 'inline'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Configurations"
-    HelpItem     = '[L]IST-PROJECTS'
-    Hotkey       = "l"
+    Category     = 'Configurations'
+    HelpItem     = 'LIST-[P]ROJECTS'
+    Hotkey       = 'p'
     MenuIndex    = 3
     NoSelNeeded  = $true
     ShellArgsMid = 'projects list'
-    ShellType    = "inline"
+    ShellType    = 'inline'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Configurations"
+    Category     = 'Configurations'
     Confirm      = $true
     HelpItem     = 'D[E]LETE'
-    Hotkey       = "e"
+    Hotkey       = 'e'
     MenuIndex    = 5
     ShellArgsMid = 'config configurations delete $($sel.name)'
-    ShellType    = "inline"
+    ShellType    = 'inline'
   }
 
   ###
@@ -302,37 +302,37 @@ function Get-SelOptions {
   ###
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Disks"
+    Category     = 'Disks'
     Default      = $true
     HelpItem     = '[D]ESCRIBE'
-    Hotkey       = "d"
+    Hotkey       = 'd'
     ShellArgsMid = 'compute disks describe --$($sel.lscope)=$($sel.location) $($sel.name)'
-    ShellType    = "inlineyq"
+    ShellType    = 'inlineyq'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Disks"
+    Category     = 'Disks'
     Confirm      = $true
     HelpItem     = 'D[E]LETE'
-    Hotkey       = "e"
+    Hotkey       = 'e'
     ShellArgsMid = 'compute disks describe --$($sel.lscope)=$($sel.location) $($sel.name)'
-    ShellType    = "inline"
+    ShellType    = 'inline'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Disks"
+    Category     = 'Disks'
     HelpItem     = '[S]NAPSHOT'
-    Hotkey       = "s"
+    Hotkey       = 's'
     ShellArgsMid = 'compute disks snapshot --$($sel.lscope)=$($sel.location) $($sel.name) --snapshot-names=ps-gcloud-$(Get-Date -Format ''yyyyMMdd-HHmmss'')-$($sel.name)'
-    ShellType    = "cmd"
+    ShellType    = 'cmd'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Disks"
+    Category     = 'Disks'
     HelpItem     = 'DE[T]ACH'
-    Hotkey       = "t"
+    Hotkey       = 't'
     ShellArgsMid = 'compute instances detach-disk `"projects/$($sel.tmpUser)`" --disk-scope=$dscope `"--disk=$($sel.tmpSelfLink)`"'
-    ShellType    = "inline"
+    ShellType    = 'inline'
     TaskPrep     = {
       switch ( $sel.lscope ) { 
         region { $dscope = 'regional' }; 
@@ -344,11 +344,11 @@ function Get-SelOptions {
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Disks"
+    Category     = 'Disks'
     HelpItem     = '[A]TTACH'
-    Hotkey       = "a"
+    Hotkey       = 'a'
     ShellArgsMid = 'compute instances attach-disk `"$($param)`" --disk-scope=$dscope `"--disk=$($sel.tmpSelfLink)`"'
-    ShellType    = "inline"
+    ShellType    = 'inline'
     TaskPrep     = {
       switch ( $sel.lscope ) { 
         region { $dscope = 'regional' }; 
@@ -364,20 +364,20 @@ function Get-SelOptions {
   ###
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Firewall"
+    Category     = 'Firewall'
     HelpItem     = '[D]ESCRIBE'
-    Hotkey       = "d"
+    Hotkey       = 'd'
     ShellArgsMid = 'compute firewall-rules describe $($sel.name) --format=''yaml'''
-    ShellType    = "inlineyq"
+    ShellType    = 'inlineyq'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Firewall"
+    Category     = 'Firewall'
     HelpItem     = '[O]UT-GRIDVIEW'
-    Hotkey       = "o"
+    Hotkey       = 'o'
     NoSelNeeded  = $true
     ShellArgsMid = ''
-    ShellType    = "out-gridview"
+    ShellType    = 'out-gridview'
     TaskPrep     = {
       $Instances | Out-GridView
       return
@@ -385,12 +385,12 @@ function Get-SelOptions {
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Firewall"
+    Category     = 'Firewall'
     HelpItem     = '[T]ARGET-TAGS'
-    Hotkey       = "t"
+    Hotkey       = 't'
     NoSelNeeded  = $true
     ShellArgsMid = ''
-    ShellType    = "out-gridview"
+    ShellType    = 'out-gridview'
     TaskPrep     = {
       $of = gcloud compute firewall-rules list --format=json | ConvertFrom-Json
       $tags = New-Object System.Collections.Generic.Dictionary"[String,PSObject]"
@@ -416,12 +416,12 @@ function Get-SelOptions {
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Firewall"
+    Category     = 'Firewall'
     HelpItem     = '[S]OURCE-TAGS'
-    Hotkey       = "s"
+    Hotkey       = 's'
     NoSelNeeded  = $true
     ShellArgsMid = ''
-    ShellType    = "out-gridview"
+    ShellType    = 'out-gridview'
     TaskPrep     = {
       $of = gcloud compute firewall-rules list --format=json | ConvertFrom-Json
       $tags = New-Object System.Collections.Generic.Dictionary"[String,PSObject]"
@@ -452,39 +452,39 @@ function Get-SelOptions {
   ###
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "MIG"
+    Category     = 'MIG'
     HelpItem     = '[D]ESCRIBE'
-    Hotkey       = "d"
+    Hotkey       = 'd'
     MenuIndex    = 1
     ShellArgsMid = 'compute instance-groups managed describe $($sel.name) --region=$($sel.location)'
-    ShellType    = "inlineyq"
+    ShellType    = 'inlineyq'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "MIG"
+    Category     = 'MIG'
     HelpItem     = '[R#=#]ESIZE'
-    Hotkey       = "r"
+    Hotkey       = 'r'
     MenuIndex    = 2
     ShellArgsMid = 'compute instance-groups managed resize $($sel.name) --region=$($sel.location) --size=$($param)'
-    ShellType    = "cmd"
+    ShellType    = 'cmd'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "MIG"
+    Category     = 'MIG'
     HelpItem     = '[U]PDATE'
-    Hotkey       = "u"
+    Hotkey       = 'u'
     MenuIndex    = 3
     ShellArgsMid = 'compute instance-groups managed rolling-action replace $($sel.name) --region=$($sel.location)'
-    ShellType    = "cmd"
+    ShellType    = 'cmd'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "MIG"
+    Category     = 'MIG'
     HelpItem     = '[C]LEAR-AUTOHEAL'
-    Hotkey       = "c"
+    Hotkey       = 'c'
     MenuIndex    = 4
     ShellArgsMid = 'compute instance-groups managed update --clear-autohealing  $($sel.name) --region=$($sel.location)'
-    ShellType    = "cmd"
+    ShellType    = 'cmd'
   }
 
   ###
@@ -492,11 +492,11 @@ function Get-SelOptions {
   ###
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Snapshots"
+    Category     = 'Snapshots'
     HelpItem     = '[D]ESCRIBE'
-    Hotkey       = "d"
+    Hotkey       = 'd'
     ShellArgsMid = 'compute snapshots describe $($sel.name)'
-    ShellType    = "inlineyq"
+    ShellType    = 'inlineyq'
   }
 
   ###
@@ -504,60 +504,60 @@ function Get-SelOptions {
   ###
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "SQL"
+    Category     = 'SQL'
     HelpItem     = '[D]ESCRIBE'
-    Hotkey       = "d"
+    Hotkey       = 'd'
     ShellArgsMid = 'sql instances describe describe $($sel.name)'
-    ShellType    = "inlineyq"
+    ShellType    = 'inlineyq'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "SQL"
+    Category     = 'SQL'
     HelpItem     = '[L]IST-BACKUPS'
-    Hotkey       = "l"
+    Hotkey       = 'l'
     ShellArgsMid = 'sql backups list --instance=$($sel.name)'
-    ShellType    = "inline"
+    ShellType    = 'inline'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "SQL"
+    Category     = 'SQL'
     HelpItem     = '[B]ACKUP'
-    Hotkey       = "b"
+    Hotkey       = 'b'
     ShellArgsMid = 'sql backups create --instance=$($sel.name)'
-    ShellType    = "inline"
+    ShellType    = 'inline'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "SQL"
+    Category     = 'SQL'
     HelpItem     = '[R#=backup-id]ESTORE'
-    Hotkey       = "r"
+    Hotkey       = 'r'
     ShellArgsMid = 'sql backups restore --restore-instance=$($sel.name)  $param'
-    ShellType    = "show-command"
+    ShellType    = 'show-command'
   }  
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "SQL"
+    Category     = 'SQL'
     HelpItem     = '[S]TART'
-    Hotkey       = "s"
+    Hotkey       = 's'
     ShellArgsMid = 'sql instances patch $($sel.name) --activation-policy=ALWAYS'
-    ShellType    = "cmd"
+    ShellType    = 'cmd'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "SQL"
+    Category     = 'SQL'
     HelpItem     = 'S[T]OP'
-    Hotkey       = "t"
+    Hotkey       = 't'
     ShellArgsMid = 'sql instances patch $($sel.name) --activation-policy=NEVER '
-    ShellType    = "cmd"
+    ShellType    = 'cmd'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "SQL"
+    Category     = 'SQL'
     Confirm      = $true
     HelpItem     = 'D[E]LETE'
-    Hotkey       = "e"
+    Hotkey       = 'e'
     ShellArgsMid = 'sql instances delete $($sel.name)'
-    ShellType    = "inline"
+    ShellType    = 'inline'
   }
 
   ###
@@ -565,54 +565,54 @@ function Get-SelOptions {
   ###
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Storage"
+    Category     = 'Storage'
     Default      = $true
     MenuIndex    = 1
     HelpItem     = '[D]ESCRIBE'
-    Hotkey       = "d"
+    Hotkey       = 'd'
     ShellArgsMid = 'storage buckets describe gs://$($sel.name)'
-    ShellType    = "inlineyq"
+    ShellType    = 'inlineyq'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Storage"
+    Category     = 'Storage'
     HelpItem     = '[L]IST'
     MenuIndex    = 2
-    Hotkey       = "l"
+    Hotkey       = 'l'
     ShellArgsMid = 'storage ls -r gs://$($sel.name)'
-    ShellType    = "log"
+    ShellType    = 'log'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Storage"
+    Category     = 'Storage'
     HelpItem     = 'VE[R]SIONS'
     MenuIndex    = 3
-    Hotkey       = "r"
+    Hotkey       = 'r'
     ShellArgsMid = 'storage ls -r --all-versions gs://$($sel.name)'
-    ShellType    = "log"
+    ShellType    = 'log'
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Storage"  
+    Category     = 'Storage'  
     HelpItem     = '[v]DOWNLOAD'
-    Hotkey       = "v"
+    Hotkey       = 'v'
     MenuIndex    = 4
     ShellArgsMid = 'storage cp -r $($TaskPrep.src) ./$($TaskPrep.dst)'
-    ShellType    = "cmd"
+    ShellType    = 'cmd'
     TaskPrep     = {
       if (!$Param) {
-        Write-Debug "No param specified, using root directory"
+        Write-Debug 'No param specified, using root directory'
         
         $src = "gs://$($sel.name)/*".clone()
         $pathName = 'root'
       }
       elseif ($Param[-1] -in @('/', '\')) {
-        Write-Debug "Downloading a folder"
+        Write-Debug 'Downloading a folder'
         $src = "gs://$($sel.name)/${param}*".clone()
         $pathName = Split-Path $Param -Leaf
       }
       else {
-        Write-Debug "Downloading a file"
+        Write-Debug 'Downloading a file'
         $src = "gs://$($sel.name)/${param}".clone()
         $pathName = Split-Path $Param -Leaf
       }
@@ -625,12 +625,12 @@ function Get-SelOptions {
   }
 
   $SelOptions += New-Object -TypeName PsObject -Property @{
-    Category     = "Storage"  
+    Category     = 'Storage'  
     HelpItem     = '[^]UPLOAD'
-    Hotkey       = "^"
+    Hotkey       = '^'
     MenuIndex    = 5
     ShellArgsMid = 'storage cp -r $($TaskPrep.src) gs://$($TaskPrep.dst)'
-    ShellType    = "cmd"
+    ShellType    = 'cmd'
     TaskPrep     = {
       $src = $Param
       $dst = $sel.name
@@ -646,7 +646,7 @@ function Get-SelOptions {
 
   foreach ($i in 1..(($o.Count) - 1)) {
     if ($null -eq $o[$i].MenuIndex) {
-      Add-Member -InputObject $o[$i] -NotePropertyName MenuIndex  -NotePropertyValue 500
+      Add-Member -InputObject $o[$i] -NotePropertyName MenuIndex -NotePropertyValue 500
     }
   }
 
@@ -668,13 +668,13 @@ function Show-Menu {
   }
 
 
-  $instructions = ($SelOptions | Where-Object MenuHidden -ne $true | Sort-Object -Property MenuIndex | Select-Object -ExpandProperty HelpItem) -join '   '
+  $instructions = ($SelOptions | Where-Object MenuHidden -NE $true | Sort-Object -Property MenuIndex | Select-Object -ExpandProperty HelpItem) -join '   '
 
   do {
     $LoadOptions.LoadCmd = $ExecutionContext.InvokeCommand.ExpandString($LoadOptions.LoadCmd)
     $output = $(Invoke-Expression $LoadOptions.LoadCmd)
     if ($LASTEXITCODE -ne 0) {
-      $Raise_Error = "Error running gcloud command"; Throw $Raise_Error
+      $Raise_Error = 'Error running gcloud command'; Throw $Raise_Error
     }
   
     if ($null -ne $output) {
@@ -684,9 +684,9 @@ function Show-Menu {
       $Raise_Error = "ERROR: No $($ResourceType.ToUpper()) instances found in GCP project."; Throw $Raise_Error
     }
   
-    if (Get-Member -InputObject $instances[0] -name "external_ip" -MemberType Properties) {
+    if (Get-Member -InputObject $instances[0] -Name 'external_ip' -MemberType Properties) {
       if (($instances.external_ip | Group-Object -AsHashTable -AsString)[''].Count -eq $instances.Count) {
-        $instances = $instances | Select-Object  -Property * -ExcludeProperty external_ip
+        $instances = $instances | Select-Object -Property * -ExcludeProperty external_ip
       }
     }
   
@@ -694,7 +694,7 @@ function Show-Menu {
       $instances = Invoke-Expression "`$instances | $($LoadOptions.Transform)"
     }
   
-    $outText = ($instances | Select-Object * -ExcludeProperty tmp* | ForEach-Object { $index = 1 } { $_; $index++ } | Format-Table -Property @{ Label = 'index'; Expression = { $index }; }, * -Wrap | Out-String).Replace("`r`n`r`n", "")
+    $outText = ($instances | Select-Object * -ExcludeProperty tmp* | ForEach-Object { $index = 1 } { $_; $index++ } | Format-Table -Property @{ Label = 'index'; Expression = { $index }; }, * -Wrap | Out-String).Replace("`r`n`r`n", '')
   
     if (${ReturnAs-Object} -eq $true) {
       # TBC
@@ -748,7 +748,7 @@ function ConfigurationsActivateWildcard {
     $Raise_Error = "Filter *$Wildcard* found more than one matching projects, please narrow." ; Throw $Raise_Error
   }
 
-  Selections = [array]$Menu | Where-Object project -eq $projects.projectId
+  Selections = [array]$Menu | Where-Object project -EQ $projects.projectId
 
   Write-Debug "[ConfigurationsActivateWildcard]: Finished, project found: $Selections."
   return @{
@@ -759,7 +759,7 @@ function ConfigurationsActivateWildcard {
     SelCount   = 1
   }
 
-  $sel = $Menu | Where-Object project -eq $projects.projectId
+  $sel = $Menu | Where-Object project -EQ $projects.projectId
   return $sel
 }
 function ExtractAnswersByIndex {
@@ -854,8 +854,8 @@ function DisplaySelectionsAndConfirm {
   }
   else {
     Write-Host "Your selections: $($Answers.Selections | ft | Out-String)"
-    $YesNo = Read-Host "WARNING: Execute on multiple targets? (yes/no)"
-    Write-Host ""
+    $YesNo = Read-Host 'WARNING: Execute on multiple targets? (yes/no)'
+    Write-Host ''
     if (@('y', 'yes') -notcontains $YesNo) {
       exit; break
     }
@@ -896,13 +896,13 @@ function Find-SelAction {
 
   Write-Debug "[Find-SelAction] Selections.Action= ``$($Selections.Action | Out-String)``"
   if ([string]::IsNullOrEmpty($Selections.Action)) {
-    $Action = $SelOptions | Where-Object Default -eq $true
+    $Action = $SelOptions | Where-Object Default -EQ $true
     if ($null -eq $Action) {
       $Raise_Error = "No default action defined for ``$ResourceType``." ; Throw $Raise_Error     
     }
   }
   else {
-    $Action = $SelOptions | Where-Object Hotkey -eq $Selections.Action
+    $Action = $SelOptions | Where-Object Hotkey -EQ $Selections.Action
     if ($null -eq $Action) {
       $Raise_Error = "[Find-SelAction]: No action defined for ``${ResourceType}``:``$($Selections.Action)``." ; Throw $Raise_Error     
     }
@@ -920,23 +920,23 @@ function Invoke-Selections {
 
   Write-Debug "[Invoke-Selections]: `$Selections: $($Selections | Out-String)"
   Write-Debug "[Invoke-Selections]: `$SelAction: $($SelAction | Out-String)"
-  Write-Debug "[Invoke-Selections]: >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
+  Write-Debug '[Invoke-Selections]: >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>'
 
 
   # ConEmu detection
   if (Get-Command -ErrorAction Ignore -Type Application conemu) {
-    Write-Debug "ConEmu found in path."
-    $ConEmuCmd = "conemu"
+    Write-Debug 'ConEmu found in path.'
+    $ConEmuCmd = 'conemu'
   }
   else {
-    Write-Debug "ConEmu is running, we can get the path from there."
+    Write-Debug 'ConEmu is running, we can get the path from there.'
     $ConEmuCmd = (Get-Process conemu -ErrorAction Ignore | Select-Object -First 1 ).Path
   }
 
   # YQ detection
   if (Get-Command -ErrorAction Ignore -Type Application yq) {
-    Write-Debug "YQ found in path."
-    $YQCmd = "yq"
+    Write-Debug 'YQ found in path.'
+    $YQCmd = 'yq'
   }
   else {
     $YQCmd = $null
@@ -945,44 +945,44 @@ function Invoke-Selections {
   $UseInternalIpCmd = $(DetectUseInternalIpSsh -Switch $UseInternalIpSsh  ).Cmd
 
   $ExecStyle = New-Object -TypeName PsObject -Property @{
-    ShellCmd           = "cmd";
-    ShellParams        = "/c";
-    WindowStyle        = "Normal";
-    SleepCmd           = "& timeout /t 60"
+    ShellCmd           = 'cmd';
+    ShellParams        = '/c';
+    WindowStyle        = 'Normal';
+    SleepCmd           = '& timeout /t 60'
     AdditionalSwitches = @{}
   }
 
   switch -regex ($SelAction.ShellType) {
-    "cmd" {
+    'cmd' {
       # Already handled in default 
     }
-    "hcmd" { 
-      $ExecStyle.AdditionalSwitches = @{WindowStyle = "Minimized" }
+    'hcmd' { 
+      $ExecStyle.AdditionalSwitches = @{WindowStyle = 'Minimized' }
     }
-    "inline.*" { 
-      $ExecStyle.shellParams = "/c"; 
-      $ExecStyle.SleepCmd = "& echo.";
+    'inline.*' { 
+      $ExecStyle.shellParams = '/c'; 
+      $ExecStyle.SleepCmd = '& echo.';
       $ExecStyle.AdditionalSwitches = @{NoNewWindow = $true; Wait = $true }
     }
-    "inlineyq" { 
+    'inlineyq' { 
       if (!($YQCmd)) { break; }
-      $ExecStyle.shellParams = "/c"; 
-      $ExecStyle.SleepCmd = "| yq & echo.";
+      $ExecStyle.shellParams = '/c'; 
+      $ExecStyle.SleepCmd = '| yq & echo.';
       $ExecStyle.AdditionalSwitches = @{NoNewWindow = $true; Wait = $true }
     }
-    "log" {
-      $ExecStyle.AdditionalSwitches = @{WindowStyle = "Maximized" };
-      $ExecStyle.SleepCmd = "& pause"
+    'log' {
+      $ExecStyle.AdditionalSwitches = @{WindowStyle = 'Maximized' };
+      $ExecStyle.SleepCmd = '& pause'
     }
-    "log" {
+    'log' {
       # ConEmu
       if (!($ConEmuCmd)) { break; }
       $ExecStyle.shellCmd = $ConEmuCmd;
-      $ExecStyle.shellParams = "-run";
-      $ExecStyle.SleepCmd = "& pause"
-      $ExecStyle.AdditionalSwitches = @{WindowStyle = "Maximized" };
+      $ExecStyle.shellParams = '-run';
+      $ExecStyle.SleepCmd = '& pause'
+      $ExecStyle.AdditionalSwitches = @{WindowStyle = 'Maximized' };
     }
-    "out-gridview" {
+    'out-gridview' {
     }
     default { $Raise_Error = "Unexpected exec type: $type" ; Throw $Raise_Error }
   }
@@ -1011,7 +1011,7 @@ function Invoke-Selections {
   
     Start-Process $($ExecStyle.ShellCmd) -ArgumentList "$argList " @AdditionalSwitches -Verbose
   
-    if ($type -eq "inline") {
+    if ($type -eq 'inline') {
       Write-Host ''
     }
   
@@ -1025,12 +1025,12 @@ function Get-EnvPathsArr {
   $Paths = @() 
   if ( @('Machine', 'All') -icontains $Scope) {
     $Paths += `
-      [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::Machine).Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
+      [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine).Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
   }
  
   if ( @('User', 'All') -icontains $Scope) {
     $Paths += `
-      [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User).Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
+      [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::User).Split(';', [System.StringSplitOptions]::RemoveEmptyEntries)
   }
 
   return $Paths
@@ -1040,7 +1040,7 @@ function Install-Script {
   if (Get-EnvPathsArr('All') -notcontains $PSScriptRoot) {
     Write-Output 'INSTALL: Adding script location to %PATH% as user env var...'
   
-    [Environment]::SetEnvironmentVariable("Path", "$((Get-EnvPathsArr('User')) -join ';');$PSScriptRoot", [System.EnvironmentVariableTarget]::User)
+    [Environment]::SetEnvironmentVariable('Path', "$((Get-EnvPathsArr('User')) -join ';');$PSScriptRoot", [System.EnvironmentVariableTarget]::User)
   }
   
   if ($env:Path -split ';' -notcontains $PSScriptRoot) {
