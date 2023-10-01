@@ -1,7 +1,9 @@
 <#
   .SYNOPSIS
-  Script to summarise a terraform plan, v2023.10.01
+  Script to summarise a terraform plan.
   Tested with Terraform v0.11 - v1.5
+
+  .VERSION 2023.10.01
 
   .LINK
   https://github.com/levid0s/PS-Gcloud
@@ -13,15 +15,26 @@
 
   .PARAMETER SkipRefreshResources
   Run the terraform plan with the -refresh=false flag. This will skip refreshing the state of the resources.
+
+  .PARAMETER TerraformPath
+  Path to the terraform executable. Defaults to 'tf' although on most systems this would be 'terraform'.
+
+  .PARAMETER AdditionalParams
+  Additional parameters to pass to the terraform plan command. For example, to specify a plan file, use -AdditionalParams='-var=shutdown=true'
+
+  .PARAMETER ShutDown
+  Append -var=shutdown=true to the terraform plan command.
 #>
 
 param(
   [Parameter(Position = 0)][string]$Logfile = '.\tfplans\tf-plan.log',
   [Parameter()][ValidateSet('Text', 'Object')][string[]]$OutputType = 'Text',
   [Parameter()][string]$Grep = '',
-  [Switch]$RefreshPlan,
-  [Switch]$SkipRefreshResources,
-  [string]$TerraformPath = 'tf'
+  [switch]$RefreshPlan,
+  [switch]$SkipRefreshResources,
+  [string]$TerraformPath = 'tf',
+  [string]$AdditionalParams = '',
+  [switch]$ShutDown
 )
 
 $LogFolder = Split-Path $LogFile -Parent
@@ -52,6 +65,10 @@ if ($RefreshPlan) {
   }
 }
 
+if ($ShutDown) {
+  $AdditionalParams += '-var=shutdown=true'
+}
+
 if ($SkipRefreshResources) {
   $SkipRefreshCmd = '-refresh=false'
 }
@@ -59,7 +76,7 @@ if ($SkipRefreshResources) {
 if (!(Test-Path $LogFile)) {
   if ($RefreshPlan) { $UpdatedMsg = 'updated ' } else { $UpdatedMsg = '' }
   Write-Output "Generating $($UpdatedMsg)terraform plan..."
-  &$TerraformPath plan $SkipRefreshCmd -no-color > "$LogFile"
+  & $TerraformPath plan $SkipRefreshCmd $AdditionalParams -no-color > "$LogFile"
 
   if ($LASTEXITCODE -ne 0) {
     $Raise_Error = 'Error executing Terraform Plan.'; Throw $Raise_Error

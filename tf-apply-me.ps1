@@ -1,12 +1,19 @@
+<#
+.VERSION 2023.10.01
+#>
+
 param(
   [switch]${Auto-Approve},
   [switch]$ReInit,
   [string]$TerraformPath = 'tf',
-  [switch]$ShutDown
+  [switch]$ShutDown,
+  [switch]$AuthOnly,
+  [ValidateSet('apply', 'plan', 'destroy')][string]$Action = 'apply'
 )
 
-$env:TF_VAR_GOOGLE_ACCESS_TOKEN = "$(gcloud auth print-access-token)"
-$env:GOOGLE_ACCESS_TOKEN = $env:TF_VAR_GOOGLE_ACCESS_TOKEN
+if ($Action -eq 'plan') {
+  $args += '-detailed-exitcode'
+}
 
 function Detect-TerraformVersion {
   ## Method 1: versions.tf
@@ -38,13 +45,21 @@ function Detect-TerraformVersion {
 }
 
 function Invoke-TerraformInit {
+  param(
+    [bool]$Reconfigure = $true
+  )
+
   Write-Debug 'Attempting: terraform init'
   if (Test-Path -Path './tf-init.ps1') {
-    Write-Debug 'Running custom tf-init.ps1'
+    Write-Information 'Running custom tf-init.ps1'
     & .\tf-init.ps1
   }
   else {
-    & $TerraformPath init -backend-config="access_token=$env:TF_VAR_GOOGLE_ACCESS_TOKEN" -reconfigure
+    $ReconfigureCmd = ''
+    if ($Reconfigure) {
+      $ReconfigureCmd = '-reconfigure'
+    }
+    & $TerraformPath init -backend-config="access_token=$env:TF_VAR_GOOGLE_ACCESS_TOKEN" $ReconfigureCmd
   }
   return $LASTEXITCODE
 }
@@ -62,6 +77,14 @@ function Remove-StateLock {
   }
 
   & gcloud storage rm $LockPath
+}
+
+$env:TF_VAR_GOOGLE_ACCESS_TOKEN = "$(gcloud auth print-access-token)"
+$env:GOOGLE_ACCESS_TOKEN = $env:TF_VAR_GOOGLE_ACCESS_TOKEN
+Invoke-TerraformInit
+
+if ($AuthOnly) {
+  exit 0
 }
 
 if ($ReInit) {
@@ -104,6 +127,7 @@ if ($ShutDown) {
 $retries = 0
 $lastError = ''
 
+# Terraform Init Loop
 while ($retries -le 1) {
   $retries++;
 
@@ -145,17 +169,17 @@ while ($retries -le 1) {
   }
 
   # Error is not retriable, exiting.
-  Write-Host 'Terraform validation failed!'
+  Write-Information 'Terraform validation failed!'
   exit $LASTEXITCODE
 }
 
 
 $AutoApproveCmd = ''
-if (${Auto-Approve}) {
+if (${Auto-Approve} -and $Action -ne 'plan') {
   $AutoApproveCmd = '-auto-approve'
 }
 	
-Write-Host "Starting Terraform Apply..`n"
+Write-Information "Starting Terraform ${Action}..`n"
 
 $retries = 0
 $lastError = ''
@@ -171,11 +195,11 @@ while ($retries -le 1) {
 
   # $env:TF_VAR_GOOGLE_ACCESS_TOKEN = $(Get-Content .\token-google.secret)
 
-  # Apply Terraform
-  & $TerraformPath apply $AutoApproveCmd $ShutDownCmd $args 2>&1 | Tee-Object -Variable ProcessOutput
+  # Terraform Apply/Plan/Destroy
+  & $TerraformPath $Action $AutoApproveCmd $ShutDownCmd $args 2>&1 | Tee-Object -Variable ProcessOutput
 
   if ($LASTEXITCODE -eq 0) {
-    Write-Verbose 'Terraform apply success.'
+    Write-Verbose "Terraform ${Action} success."
     break
   }
 
@@ -196,10 +220,10 @@ while ($retries -le 1) {
     $pattern = 'Path:\s+(.*?)\s*│'
 		
     $match = [regex]::Match($processOutput, $pattern)
-    # if (!$match.Success) {
-      # # Write-Error 'Unable to parse lock path from error message'
-      # # exit 1
-    # }
+    if (!$match.Success) {
+      Write-Error 'Unable to parse lock path from error message'
+      exit 1
+    }
 
     $lockPath = $match.Groups[1].Value
     Write-Debug "Detected lock path: $lockPath"
@@ -214,6 +238,7 @@ while ($retries -le 1) {
   exit $LASTEXITCODE
 }
 
-
-& $TerraformPath output > tf-output.txt
-Write-Host 'Updated tf-output.txt'
+if ($Action -ne 'plan') {
+  & $TerraformPath output > tf-output.txt
+  Write-Host 'Updated tf-output.txt'
+}
