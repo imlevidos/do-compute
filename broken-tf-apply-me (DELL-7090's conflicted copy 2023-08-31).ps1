@@ -15,10 +15,10 @@ function Detect-TerraformVersion {
   }
 
   $vtf = Get-Content versions.tf
-  $search = $vtf | Select-String 'required_version.*?(\d+)\.(\d+)\.(\d+)'
+  $search = $vtf | Select-String "required_version.*?(\d+)\.(\d+)\.(\d+)"
 
   if (!$search) {
-    Write-Verbose 'Version cannot be determined'
+    Write-Verbose "Version cannot be determined"
     return
   }
 
@@ -181,7 +181,7 @@ while ($retries -le 1) {
 
   # Any retriable errors can be detected here
   if (($processOutput -match 'Failed to open state file') -and (Test-Path -Path 'token-google.secret')) {
-    Write-Debug 'Init needed to refersh credentials.'
+    Write-Debug "Init needed to refersh credentials."
 
     $lastError = 'InitNeeded'
     continue
@@ -194,12 +194,11 @@ while ($retries -le 1) {
 
   if ($processOutput -match 'Error acquiring the state lock') {
     $pattern = 'Path:\s+(.*?)\s*│'
-		
     $match = [regex]::Match($processOutput, $pattern)
-    # if (!$match.Success) {
-      # # Write-Error 'Unable to parse lock path from error message'
-      # # exit 1
-    # }
+    if (!$match.Success) {
+      Write-Error 'Unable to parse lock path from error message'
+      exit 1
+    }
 
     $lockPath = $match.Groups[1].Value
     Write-Debug "Detected lock path: $lockPath"
