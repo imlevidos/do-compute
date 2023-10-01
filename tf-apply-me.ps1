@@ -11,6 +11,8 @@ param(
   [ValidateSet('apply', 'plan', 'destroy')][string]$Action = 'apply'
 )
 
+$InitCompleted = $false
+
 if ($Action -eq 'plan') {
   $args += '-detailed-exitcode'
 }
@@ -81,14 +83,14 @@ function Remove-StateLock {
 
 $env:TF_VAR_GOOGLE_ACCESS_TOKEN = "$(gcloud auth print-access-token)"
 $env:GOOGLE_ACCESS_TOKEN = $env:TF_VAR_GOOGLE_ACCESS_TOKEN
-Invoke-TerraformInit
-
 if ($AuthOnly) {
+  Invoke-TerraformInit
   exit 0
 }
 
 if ($ReInit) {
   Invoke-TerraformInit
+  $InitCompleted = $true
 }
 
 $ShutDownCmd = ''
@@ -96,7 +98,8 @@ if ($ShutDown) {
   $ShutDownCmd = '-var=shutdown=true'
 }
 
-# Check the validity of the token if the file exists
+# Check the validity of the token if the file exists.
+# No longer needed because we're doing auth at each run, but useful code to keep around.
 # if (Test-Path -Path 'token-google.secret') {
 #   $token = Get-Content -Path 'token-google.secret'
 #   try {
@@ -134,6 +137,7 @@ while ($retries -le 1) {
   switch ($lastError) {
     'InitNeeded' {
       Invoke-TerraformInit
+      $InitCompleted = $true
       if ($LASTEXITCODE -ne 0) {
         Write-Error "Terraform init failed with exit code: $Result"
         exit 1
@@ -173,6 +177,10 @@ while ($retries -le 1) {
   exit $LASTEXITCODE
 }
 
+if (!$InitCompleted) {
+  Invoke-TerraformInit
+  $InitCompleted = $true
+}
 
 $AutoApproveCmd = ''
 if (${Auto-Approve} -and $Action -ne 'plan') {
@@ -187,11 +195,11 @@ $lastError = ''
 while ($retries -le 1) {
   $retries++;
 
-  switch ($lastError) {
-    'InitNeeded' {
-      Invoke-TerraformInit
-    }
-  }
+  # switch ($lastError) {
+  #   'InitNeeded' {
+  #     Invoke-TerraformInit
+  #   }
+  # }
 
   # $env:TF_VAR_GOOGLE_ACCESS_TOKEN = $(Get-Content .\token-google.secret)
 
@@ -204,17 +212,17 @@ while ($retries -le 1) {
   }
 
   # Any retriable errors can be detected here
-  if (($processOutput -match 'Failed to open state file') -and (Test-Path -Path 'token-google.secret')) {
-    Write-Debug 'Init needed to refersh credentials.'
+  # if (($processOutput -match 'Failed to open state file') -and (Test-Path -Path 'token-google.secret')) {
+  #   Write-Debug 'Init needed to refersh credentials.'
 
-    $lastError = 'InitNeeded'
-    continue
-  }
+  #   $lastError = 'InitNeeded'
+  #   continue
+  # }
 
-  if ($processOutput -match 'please run "terraform init"') {
-    $lastError = 'InitNeeded'
-    continue
-  }
+  # if ($processOutput -match 'please run "terraform init"') {
+  #   $lastError = 'InitNeeded'
+  #   continue
+  # }
 
   if ($processOutput -match 'Error acquiring the state lock') {
     $pattern = 'Path:\s+(.*?)\s*│'
