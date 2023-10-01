@@ -11,6 +11,8 @@ param(
   [ValidateSet('apply', 'plan', 'destroy')][string]$Action = 'apply'
 )
 
+$InformationPreference = 'Continue'
+
 $InitCompleted = $false
 
 if ($Action -eq 'plan') {
