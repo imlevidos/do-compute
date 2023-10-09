@@ -1,5 +1,5 @@
 ﻿<#
-.VERSION 2023.10.01
+.VERSION 2023.10.09
 #>
 
 param(
@@ -8,18 +8,13 @@ param(
   [string]$TerraformPath = 'tf',
   [switch]$ShutDown,
   [switch]$AuthOnly,
+  [switch]$TfEnvPsActive,
   [ValidateSet('apply', 'plan', 'destroy')][string]$Action = 'apply'
 )
 
 $InformationPreference = 'Continue'
 
-$InitCompleted = $false
-
-if ($Action -eq 'plan') {
-  $args += '-detailed-exitcode'
-}
-
-function Detect-TerraformVersion {
+function Get-TerraformVersion {
   ## Method 1: versions.tf
   if (!(Test-Path versions.tf)) {
     return
@@ -29,29 +24,93 @@ function Detect-TerraformVersion {
   $search = $vtf | Select-String 'required_version.*?(\d+)\.(\d+)\.(\d+)'
 
   if (!$search) {
-    Write-Verbose 'Version cannot be determined'
+    Write-Debug 'Version cannot be determined from versions.tf'
     return
   }
 
   $groups = $search.Matches
   $null, $major, $minor, $bugfix = $groups.Groups
   $result = "$major.$minor.$bugfix"
-  Write-Verbose "Detected terraform version: $result"
+  Write-Verbose "Detected terraform version from versions.tf: $result"
 
   return $result
 
   ## Method 2: Terraform state pull:
+  Write-Debug "Attempting to detect version from the Terraform state"
   $search = tf state pull | Select-String -Pattern '^  "terraform_version": \"(\d+)\.(\d+)\.(\d+)\"'
   $groups = $search.Matches
   $null, $major, $minor, $bugfix = $groups.Groups
   $result = "$major.$minor.$bugfix"
-
+  Write-Debug "Detected version from state: $result"
+  return $result
 }
+
+function Invoke-TerraformDownload {
+  param(
+    [Parameter(Mandatory = $true)][string]$Version,
+    [string]$OutDir = "$env:TEMP/.tf.env.ps"
+  )
+
+  $InformationPreference = 'Continue'
+
+  $TfPath = "$OutDir/tf-$Version.exe"
+
+  if (Test-Path $TfPath) {
+    Write-Debug "Terraform version already cached: $TfPath"
+    return $TfPath
+  }
+
+  $TfArchive = $TfPath -replace '\.exe$', '.zip'
+  if (!(Test-Path -Path $OutDir -PathType Container)) {
+    New-Item -ItemType Directory -Path $OutDir | Out-Null
+  }
+
+  $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
+    "AMD64" { "amd64" }
+    "x86" { "386" }
+    default { Throw "CPU Architecture cannot be determined: $env:PROCESSOR_ARCHITECTURE" }
+  }
+
+  $TfUrl = "https://releases.hashicorp.com/terraform/${Version}/terraform_${Version}_windows_${arch}.zip"
+
+  $proxy = [System.Net.WebRequest]::DefaultWebProxy                                 
+  $proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials      
+
+  $proxyUriBuilder = New-Object System.UriBuilder                                   
+  $proxyUriBuilder.Scheme = $proxy.Address.Scheme                                   
+  $proxyUriBuilder.Host = $proxy.Address.Host                                       
+  $proxyUriBuilder.Port = $proxy.Address.Port            
+
+  $proxyUri = $proxyUriBuilder.Uri                                                  
+  Write-Information "Downloading Terraform v${Version} to: $TfPath"
+  Invoke-WebRequest -Uri $TfUrl -OutFile $TfArchive -Proxy $ProxyUri
+  Expand-Archive -Path $TfArchive -DestinationPath $OutDir -Force
+  Remove-Item -Path $TfArchive
+  Rename-Item -Path "$OutDir/terraform.exe" -NewName $TfPath
+
+  # Test
+  $Test = & $TfPath version
+  if ($LASTEXITCODE -ne 0) {
+    Throw "Terraform download unsuccessful: $TfPath`nExit code: $LASTEXITCODE"
+  }
+  if ([string]::IsNullOrEmpty($Test)) {
+    Throw "Terraform version didn't generate any output. Try running manually? $TfPath"
+  }
+  if ($Test[0] -notlike "*$Version") {
+    Throw "Unexpected terraform version: $TfPath`n$Test"
+  }
+
+  Write-Information "Terraform download successful: $TfPath"
+  return $TfPath
+}
+
 
 function Invoke-TerraformInit {
   param(
     [bool]$Reconfigure = $true
   )
+
+  $InformationPreference = 'Continue'
 
   Write-Debug 'Attempting: terraform init'
   if (Test-Path -Path './tf-init.ps1') {
@@ -59,11 +118,12 @@ function Invoke-TerraformInit {
     & .\tf-init.ps1
   }
   else {
-    $ReconfigureCmd = ''
+    $TfCmd = @($TerraformPath, "init", "-backend-config=`"access_token=$env:TF_VAR_GOOGLE_ACCESS_TOKEN`"")
     if ($Reconfigure) {
-      $ReconfigureCmd = '-reconfigure'
+      $TfCmd += '-reconfigure'
     }
-    & $TerraformPath init -backend-config="access_token=$env:TF_VAR_GOOGLE_ACCESS_TOKEN" $ReconfigureCmd
+    Write-Debug "Exec: $($TfCmd -join ' ')"
+    & $TfCmd
   }
   return $LASTEXITCODE
 }
@@ -81,6 +141,28 @@ function Remove-StateLock {
   }
 
   & gcloud storage rm $LockPath
+}
+
+
+###
+###  Start
+###
+
+$IsTfEnvPsEffective = $TfEnvPsActive -or ($env:TF_ENV_PS_ACTIVE -eq 'true' -and !$PSBoundParameters.ContainsKey('TfEnvPsActive'))
+$InvokeTfDlParams = @{}
+if ($env:TF_ENV_PS_DIR) {
+  $InvokeTfDlParams['OutDir'] = $env:TF_ENV_PS_DIR
+}
+
+if ($IsTfEnvPsEffective) {
+  $Version = Get-TerraformVersion
+  $TerraformPath = Invoke-TerraformDownload -Version $Version @InvokeTfDlParams
+}
+
+$InitCompleted = $false
+
+if ($Action -eq 'plan') {
+  $args += '-detailed-exitcode'
 }
 
 $env:TF_VAR_GOOGLE_ACCESS_TOKEN = "$(gcloud auth print-access-token)"
