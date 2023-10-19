@@ -104,10 +104,30 @@ function Invoke-TerraformDownload {
   return $TfPath
 }
 
+function Get-TerraformBackendType {
+  $Content = Get-Content -Raw *.tf
+  $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*([a-z]+)'
+  if ($Null -eq $Search.Matches) {
+    return $Null
+  }
+  $Backend = $Search.Matches.Groups[1].Value
+  Write-Debug "Detected backend: $Backend"
+  return $Backend
+}
+
+function Get-IsGoogleTokenRequired {
+  $Content = Get-Content -Raw *.tf
+  $Search = $Content | Select-String -Pattern 'variable\s*"GOOGLE_ACCESS_TOKEN"\s*{'
+  $IsGoogleTokenRequired = $Null -ne $Search.Matches
+  Write-Debug "GOOGLE_ACCESS_TOKEN required: $IsGoogleTokenRequired"
+  return $IsGoogleTokenRequired
+}
+
 
 function Invoke-TerraformInit {
   param(
-    [bool]$Reconfigure = $true
+    [bool]$Reconfigure = $true,
+    [string]$BackendType
   )
 
   $InformationPreference = 'Continue'
@@ -118,13 +138,19 @@ function Invoke-TerraformInit {
     & .\tf-init.ps1
   }
   else {
-    $TfCmd = @($TerraformPath, "init", "-backend-config=`"access_token=$env:TF_VAR_GOOGLE_ACCESS_TOKEN`"")
-    if ($Reconfigure) {
+    $TfCmd = @($TerraformPath, "init")
+
+    if ($BackendType -eq "gcs") {
+      $TfCmd += "-backend-config=`"access_token=$env:TF_VAR_GOOGLE_ACCESS_TOKEN`""
+    } 
+    if ($Reconfigure -and $BackendType -ne 'cloud') {
       $TfCmd += '-reconfigure'
     }
+
     Write-Debug "Exec: $($TfCmd -join ' ')"
-    & $TfCmd
+    Invoke-Expression "& $TfCmd"
   }
+
   return $LASTEXITCODE
 }
 
@@ -165,15 +191,20 @@ if ($Action -eq 'plan') {
   $args += '-detailed-exitcode'
 }
 
-$env:TF_VAR_GOOGLE_ACCESS_TOKEN = "$(gcloud auth print-access-token)"
-$env:GOOGLE_ACCESS_TOKEN = $env:TF_VAR_GOOGLE_ACCESS_TOKEN
+$IsGoogleTokenRequired = Get-IsGoogleTokenRequired
+$BackendType = Get-TerraformBackendType
+
+if ($IsGoogleTokenRequired) {
+  $env:TF_VAR_GOOGLE_ACCESS_TOKEN = "$(gcloud auth print-access-token)"
+  $env:GOOGLE_ACCESS_TOKEN = $env:TF_VAR_GOOGLE_ACCESS_TOKEN  
+}
 if ($AuthOnly) {
-  Invoke-TerraformInit
+  Invoke-TerraformInit -BackendType $BackendType
   exit 0
 }
 
 if ($ReInit) {
-  Invoke-TerraformInit
+  Invoke-TerraformInit -BackendType $BackendType
   $InitCompleted = $true
 }
 
@@ -220,7 +251,7 @@ while ($retries -le 1) {
 
   switch ($lastError) {
     'InitNeeded' {
-      Invoke-TerraformInit
+      Invoke-TerraformInit -BackendType $BackendType
       $InitCompleted = $true
       if ($LASTEXITCODE -ne 0) {
         Write-Error "Terraform init failed with exit code: $Result"
@@ -262,7 +293,7 @@ while ($retries -le 1) {
 }
 
 if (!$InitCompleted) {
-  Invoke-TerraformInit
+  Invoke-TerraformInit -BackendType $BackendType
   $InitCompleted = $true
 }
 
