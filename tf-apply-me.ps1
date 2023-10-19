@@ -1,5 +1,5 @@
 ﻿<#
-.VERSION 2023.10.09
+.VERSION 2023.10.19
 #>
 
 param(
@@ -8,11 +8,13 @@ param(
   [string]$TerraformPath = 'tf',
   [switch]$ShutDown,
   [switch]$AuthOnly,
-  [switch]$TfEnvPsActive,
+  [switch]$TfEnvPsActive, # rename to -DownloadTerraform ?
+  [string]$VarFile,
   [ValidateSet('apply', 'plan', 'destroy')][string]$Action = 'apply'
 )
 
-$InformationPreference = 'Continue'
+$InformationPreference = 'SilentlyContinue'
+Write-Debug "Args: $args"
 
 function Get-TerraformVersion {
   ## Method 1: versions.tf
@@ -208,10 +210,6 @@ if ($ReInit) {
   $InitCompleted = $true
 }
 
-$ShutDownCmd = ''
-if ($ShutDown) {
-  $ShutDownCmd = '-var=shutdown=true'
-}
 
 # Check the validity of the token if the file exists.
 # No longer needed because we're doing auth at each run, but useful code to keep around.
@@ -297,11 +295,24 @@ if (!$InitCompleted) {
   $InitCompleted = $true
 }
 
-$AutoApproveCmd = ''
-if (${Auto-Approve} -and $Action -ne 'plan') {
-  $AutoApproveCmd = '-auto-approve'
+###
+###  Plan/Apply prep
+### 
+
+$TfArgs = @($Action)
+
+switch ($True) {
+  { ${Auto-Approve} -and $Action -ne 'plan' } { 
+    $TfArgs += '-auto-approve' 
+  }
+  { $ShutDown } { 
+    $TfArgs += '-var=shutdown=true'
+  }
+  { $VarFile } {
+    $TfArgs += "-var-file=$VarFile"
+  }
 }
-	
+
 Write-Information "Starting Terraform ${Action}..`n"
 
 $retries = 0
@@ -319,7 +330,9 @@ while ($retries -le 1) {
   # $env:TF_VAR_GOOGLE_ACCESS_TOKEN = $(Get-Content .\token-google.secret)
 
   # Terraform Apply/Plan/Destroy
-  & $TerraformPath $Action $AutoApproveCmd $ShutDownCmd $args 2>&1 | Tee-Object -Variable ProcessOutput
+  # & $TerraformPath $Action $AutoApproveCmd $ShutDownCmd $args 2>&1 | Tee-Object -Variable ProcessOutput
+  Write-Debug "TerraformPath $TfArgs $args"
+  & $TerraformPath $TfArgs $args 2>&1 | Tee-Object -Variable ProcessOutput
 
   if ($LASTEXITCODE -eq 0) {
     Write-Verbose "Terraform ${Action} success."
