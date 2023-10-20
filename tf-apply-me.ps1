@@ -10,6 +10,7 @@ param(
     [switch]$AuthOnly,
     [switch]$TfEnvPsActive, # rename to -DownloadTerraform ?
     [string]$VarFile,
+    [string[]]$TfApplyArgs,
     [ValidateSet('apply', 'plan', 'destroy')][string]$Action = 'apply'
 )
 
@@ -17,34 +18,125 @@ $InformationPreference = 'SilentlyContinue'
 Write-Debug "Args: $args"
 
 function Get-TerraformVersion {
-    ## Method 1: versions.tf
-    if (!(Test-Path versions.tf)) {
-        return
+    $Backend = Get-TerraformBackendType
+
+    $Version = switch ($Backend) {
+        "remote" { Get-TerraformVersionRemote; Break }
+        Default { Get-TerraformVersionText }
     }
 
-    $vtf = Get-Content versions.tf
-    $search = $vtf | Select-String 'required_version.*?(\d+)\.(\d+)\.(\d+)'
+    return $Version
+    # ## Method 1: versions.tf
+    # if (!(Test-Path versions.tf)) {
+    #     return
+    # }
 
-    if (!$search) {
-        Write-Debug 'Version cannot be determined from versions.tf'
-        return
+    # $vtf = Get-Content versions.tf
+    # $search = $vtf | Select-String 'required_version.*?(\d+)\.(\d+)\.(\d+)'
+
+    # if (!$search) {
+    #     Write-Debug 'Version cannot be determined from versions.tf'
+    #     return
+    # }
+
+    # $groups = $search.Matches
+    # $null, $major, $minor, $bugfix = $groups.Groups
+    # $result = "$major.$minor.$bugfix"
+    # Write-Verbose "Detected terraform version from versions.tf: $result"
+
+    # return $result
+
+    # ## Method 2: Terraform state pull:
+    # Write-Debug 'Attempting to detect version from the Terraform state'
+    # $search = tf state pull | Select-String -Pattern '^  "terraform_version": \"(\d+)\.(\d+)\.(\d+)\"'
+    # $groups = $search.Matches
+    # $null, $major, $minor, $bugfix = $groups.Groups
+    # $result = "$major.$minor.$bugfix"
+    # Write-Debug "Detected version from state: $result"
+    # return $result
+}
+
+function Get-TerraformVersionText {
+    $Content = Get-Content -Raw *.tf
+    $Pattern = 'required_version\s*=\s*\"[~>=\s]*(\d+)(\.\d+)?(\.\d+)?\"'
+    $Search = $Content | Select-String -Pattern $Pattern
+    $null, $Major, $Minor, $Bugfix = $Search.Matches.Groups
+    $Result = "${Major}${Minor}${Bugfix}"
+    Write-Debug "Detected Terraform version from text: $Result"
+    return $Result
+}
+
+function Get-TerraformBackendType {
+    $Content = Get-Content -Raw *.tf
+    $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*backend\s*\"([a-z]+)\"'
+    if ($Null -eq $Search.Matches) {
+        $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*(cloud)'
+    }
+    if ($Null -eq $Search.Matches) {
+        return $Null
+    }
+    $Backend = $Search.Matches.Groups[1].Value
+    Write-Debug "Detected backend: $Backend"
+    return $Backend
+}
+
+function Get-TfeToken {
+    $CliConfigFile = "$env:APPDATA/terraform.rc"
+    if (!(Test-Path $CliConfigFile)) {
+        Throw "Not found: $CliConfigFile"
+    }
+    $Pattern = "credentials\s*`"$Server`"\s*{[\s\n]*token\s*=\s*\`"(.*)`""
+    $Search = Get-Content -Raw $CliConfigFile | Select-String -Pattern $Pattern
+    if ($Null -eq $Search.Matches) {
+        Throw "Error extracting token from cli config: $CliConfigFile"
+    }
+    $Result = $Search.Matches.Groups[1].Value
+    return $Result
+}
+
+function Get-TfeWorkspace {
+    param(
+        [string]$Server,
+        [string]$Organization,
+        [string]$Workspace,
+        [string]$Token
+    )
+
+    $Headers = @{
+        "Authorization" = "Bearer $TOKEN"
+        "Content-Type"  = "application/vnd.api+json"
+    }
+    
+    $URL = "https://$Server/api/v2/organizations/$Organization/workspaces/$Workspace"
+    
+    $Response = Invoke-RestMethod -Uri $URL -Headers $Headers
+    $Result = $Response.Data
+
+    return $Result
+}
+
+function Get-TerraformVersionRemote {
+    $Token = Get-TfeToken
+
+    $RepoConfigFile = './.terraform/terraform.tfstate'
+    if (!(Test-Path $RepoConfigFile)) {
+        & terraform init
+        # Throw "Not found: $RepoConfigFile"
     }
 
-    $groups = $search.Matches
-    $null, $major, $minor, $bugfix = $groups.Groups
-    $result = "$major.$minor.$bugfix"
-    Write-Verbose "Detected terraform version from versions.tf: $result"
+    $Config = Get-Content $RepoConfigFile | ConvertFrom-Json
 
-    return $result
+    $Params = @{
+        "Server"       = $Config.backend.config.hostname
+        "Organization" = $Config.backend.config.organization
+        "Workspace"    = $Config.backend.config.workspaces[0].name
+        "Token"        = $Token
+    }
 
-    ## Method 2: Terraform state pull:
-    Write-Debug 'Attempting to detect version from the Terraform state'
-    $search = tf state pull | Select-String -Pattern '^  "terraform_version": \"(\d+)\.(\d+)\.(\d+)\"'
-    $groups = $search.Matches
-    $null, $major, $minor, $bugfix = $groups.Groups
-    $result = "$major.$minor.$bugfix"
-    Write-Debug "Detected version from state: $result"
-    return $result
+    $WorkspaceData = Get-TfeWorkspace @Params
+    $Result = $WorkspaceData.attributes.'terraform-version'
+    Write-Debug "Detected Terraform version from remote: $Result"
+    return $Result
 }
 
 function Invoke-TerraformDownload {
@@ -73,20 +165,37 @@ function Invoke-TerraformDownload {
         default { Throw "CPU Architecture cannot be determined: $env:PROCESSOR_ARCHITECTURE" }
     }
 
-    $TfUrl = "https://releases.hashicorp.com/terraform/${Version}/terraform_${Version}_windows_${arch}.zip"
-
-    $proxy = [System.Net.WebRequest]::DefaultWebProxy                                 
-    $proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials      
-
-    $proxyUriBuilder = New-Object System.UriBuilder                                   
-    $proxyUriBuilder.Scheme = $proxy.Address.Scheme                                   
-    $proxyUriBuilder.Host = $proxy.Address.Host                                       
-    $proxyUriBuilder.Port = $proxy.Address.Port            
-
+    
+    $proxy = [System.Net.WebRequest]::DefaultWebProxy
+    $proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
+    
+    $proxyUriBuilder = New-Object System.UriBuilder
+    $proxyUriBuilder.Scheme = $proxy.Address.Scheme
+    $proxyUriBuilder.Host = $proxy.Address.Host
+    $proxyUriBuilder.Port = $proxy.Address.Port
     $proxyUri = $proxyUriBuilder.Uri                                                  
+
+    $dotCount = ($Version | Select-String -Pattern '\.').Matches.Count
+    if ($dotCount -lt 2) {
+        Write-Debug "Got partial version, looking up the latest version for: $Version"
+        $TfUrl = "https://releases.hashicorp.com/terraform/"
+        $Response = Invoke-WebRequest -Uri $TfUrl -Proxy $ProxyUri -ErrorAction Stop
+        $Versions = $Response.Links.innerText
+        $Versions = $Versions | Where-Object { $_ -like 'terraform*' -and $_ -NotLike '*-*' }
+        $SortedVersions = $Versions | Sort-Object -Descending -Property {
+            $VersionComponents = ($_ -replace 'terraform_') -split '\.'
+            [version]::new($VersionComponents[0], $VersionComponents[1], $VersionComponents[2])
+        }
+        $LatestVersion = $SortedVersions | Where-Object { $_ -like "terraform_$Version*" } | Select-Object -First 1
+        $Version = $LatestVersion -replace 'terraform_', ''
+        Write-Debug "Latest version is: $Version"
+    }
+
+    $TfUrl = "https://releases.hashicorp.com/terraform/${Version}/terraform_${Version}_windows_${arch}.zip"
+    
     Write-Information "Downloading Terraform v${Version} to: $TfPath"
-    Invoke-WebRequest -Uri $TfUrl -OutFile $TfArchive -Proxy $ProxyUri
-    Expand-Archive -Path $TfArchive -DestinationPath $OutDir -Force
+    Invoke-WebRequest -Uri $TfUrl -OutFile $TfArchive -Proxy $ProxyUri -ErrorAction Stop
+    Expand-Archive -Path $TfArchive -DestinationPath $OutDir -Force -ErrorAction Stop
     Remove-Item -Path $TfArchive
     Rename-Item -Path "$OutDir/terraform.exe" -NewName $TfPath
 
@@ -106,17 +215,6 @@ function Invoke-TerraformDownload {
     return $TfPath
 }
 
-function Get-TerraformBackendType {
-    $Content = Get-Content -Raw *.tf
-    $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*backend\s*\"([a-z]+)\"'
-    if ($Null -eq $Search.Matches) {
-        return $Null
-    }
-    $Backend = $Search.Matches.Groups[1].Value
-    Write-Debug "Detected backend: $Backend"
-    return $Backend
-}
-
 function Get-IsGoogleTokenRequired {
     $Content = Get-Content -Raw *.tf
     $Search = $Content | Select-String -Pattern 'variable\s*"GOOGLE_ACCESS_TOKEN"\s*{'
@@ -125,16 +223,14 @@ function Get-IsGoogleTokenRequired {
     return $IsGoogleTokenRequired
 }
 
-
 function Invoke-TerraformInit {
     param(
         [bool]$Reconfigure = $true,
         [string]$BackendType
     )
-
     $InformationPreference = 'Continue'
 
-    Write-Debug 'Attempting: terraform init'
+    Write-Debug "Attempting: terraform init for backend type: $BackendType"
     if (Test-Path -Path './tf-init.ps1') {
         Write-Information 'Running custom tf-init.ps1'
         & .\tf-init.ps1
@@ -145,7 +241,7 @@ function Invoke-TerraformInit {
         if ($BackendType -eq 'gcs') {
             $TfCmd += "-backend-config=`"access_token=$env:TF_VAR_GOOGLE_ACCESS_TOKEN`""
         } 
-        if ($Reconfigure -and $BackendType -ne 'cloud') {
+        if ($Reconfigure -and $BackendType -notin @('remote', 'cloud')) {
             $TfCmd += '-reconfigure'
         }
 
@@ -267,19 +363,22 @@ while ($retries -le 1) {
         break
     }
 
-    Write-Debug 'Error running Terraform init'
+    Write-Debug 'Error running Terraform validate'
 
     # Any retriable errors can be detected here
     $InitNeededErrors = @(
         'module is not yet installed',
         'Missing required provider',
-        '[Pp]lease run "terraform init"',
+        'Please run "terraform init"',
+        'please run "terraform init"',
         'missing or corrupted provider plugins',
         'Module not installed'
     )
     $pattern = ($InitNeededErrors | ForEach-Object { [regex]::Escape($_) }) -join '|'
-
-    if ($processOutput -match $pattern) {
+    Write-Host "Process output is:"
+    Write-Host $ProcessOutput
+    $pattern
+    if ($ProcessOutput -match $pattern) {
         Write-Debug 'Module not installed, Terraform init needed.'
         $lastError = 'InitNeeded'
         continue
@@ -310,6 +409,9 @@ switch ($True) {
     }
     { $VarFile } {
         $TfArgs += "-var-file=$VarFile"
+    }
+    { $TfApplyArgs } {
+        $TfArgs += $TfApplyArgs
     }
 }
 
