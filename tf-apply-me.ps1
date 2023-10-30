@@ -57,11 +57,21 @@ function Get-TerraformVersion {
 }
 
 function Get-TerraformVersionText {
-    $Content = Get-Content -Raw *.tf
+    $Content = Get-Content "*.tf" -ErrorAction Stop
+    Write-Verbose "Content: $Content"
+
     $Pattern = 'required_version\s*=\s*\"[~>=\s]*(\d+)(\.\d+)?(\.\d+)?\"'
     $Search = $Content | Select-String -Pattern $Pattern
-    $null, $Major, $Minor, $Bugfix = $Search.Matches.Groups
+    $SearchMatches = $Search.Matches
+
+    Write-Verbose "Matches: $SearchMatches"
+
+    $Major = $SearchMatches[0].Groups[1]
+    $Minor = $SearchMatches[0].Groups[2]
+    $Bugfix = $SearchMatches[0].Groups[3]
+
     $Result = "${Major}${Minor}${Bugfix}"
+
     Write-Debug "Detected Terraform version from text: $Result"
     return $Result
 }
@@ -75,7 +85,7 @@ function Get-TerraformBackendType {
     if ($Null -eq $Search.Matches) {
         return $Null
     }
-    $Backend = $Search.Matches.Groups[1].Value
+    $Backend = $Search.Matches[0].Groups[1].Value
     Write-Debug "Detected backend: $Backend"
     return $Backend
 }
@@ -85,6 +95,7 @@ function Get-TfeToken {
     if (!(Test-Path $CliConfigFile)) {
         Throw "Not found: $CliConfigFile"
     }
+    $Server = '.*'
     $Pattern = "credentials\s*`"$Server`"\s*{[\s\n]*token\s*=\s*\`"(.*)`""
     $Search = Get-Content -Raw $CliConfigFile | Select-String -Pattern $Pattern
     if ($Null -eq $Search.Matches) {
@@ -109,8 +120,27 @@ function Get-TfeWorkspace {
     
     $URL = "https://$Server/api/v2/organizations/$Organization/workspaces/$Workspace"
     
-    $Response = Invoke-RestMethod -Uri $URL -Headers $Headers
+    $Response = Invoke-RestMethod -Uri $URL -Headers $Headers -ErrorAction Stop
     $Result = $Response.Data
+
+    return $Result
+}
+
+function Get-TerraformRemoteDetails {
+    $Content = Get-Content -Raw *.tf 
+    $Search = $Content | Select-String -Pattern 'terraform\s*{[\s\n]*backend\s*\"[a-z]+\"\s*{[\s\n]*hostname\s*=\s*\"(.*)\"[\s\n]*organization\s*=\s*\"(.*)\"[\s\n]*workspaces\s*{[\s\n]*(?:#.*\n)\s*name\s*=\s*\"(.*)\"'
+
+    if ($null -eq $Search) {
+        Throw "Unable to get Terraform Remote details from code."
+    }
+
+    $Result = @{
+        "Server"       = $Search.Matches[0].Groups[1].Value
+        "Organization" = $Search.Matches[0].Groups[2].Value
+        "Workspace"    = $Search.Matches[0].Groups[3].Value
+    }
+
+    Write-Debug "Detected Terraform remote settings from code: $($Result | Out-String)"
 
     return $Result
 }
@@ -120,21 +150,33 @@ function Get-TerraformVersionRemote {
 
     $RepoConfigFile = './.terraform/terraform.tfstate'
     if (!(Test-Path $RepoConfigFile)) {
-        & terraform init
+        & terraform init | Write-Debug
         # Throw "Not found: $RepoConfigFile"
     }
 
-    $Config = Get-Content $RepoConfigFile | ConvertFrom-Json
+    if (!(Test-Path $RepoConfigFile)) {
+        $Result = Get-TerraformRemoteDetails
+        $Server = $Result.Server
+        $Organization = $Result.Organization
+        $Workspace = $Result.Workspace
+    }
+    else {
+        $Config = Get-Content $RepoConfigFile | ConvertFrom-Json
+        $Server = $Config.backend.config.hostname
+        $Organization = $Config.backend.config.organization
+        $Workspace = $Config.backend.config.workspaces[0].name
+    }
 
     $Params = @{
-        "Server"       = $Config.backend.config.hostname
-        "Organization" = $Config.backend.config.organization
-        "Workspace"    = $Config.backend.config.workspaces[0].name
+        "Server"       = $Server
+        "Organization" = $Organization
+        "Workspace"    = $Workspace
         "Token"        = $Token
     }
 
     $WorkspaceData = Get-TfeWorkspace @Params
     $Result = $WorkspaceData.attributes.'terraform-version'
+    Write-Verbose "$($WorkspaceData.attributes)"
     Write-Debug "Detected Terraform version from remote: $Result"
     return $Result
 }
@@ -280,6 +322,7 @@ if ($env:TF_ENV_PS_DIR) {
 
 if ($IsTfEnvPsEffective) {
     $Version = Get-TerraformVersion
+    $Version.GetType()
     $TerraformPath = Invoke-TerraformDownload -Version $Version @InvokeTfDlParams
 }
 
