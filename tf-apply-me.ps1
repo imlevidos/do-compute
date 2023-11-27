@@ -22,7 +22,13 @@ function Get-TerraformVersion {
 
     $Version = switch ($Backend) {
         "remote" { Get-TerraformVersionRemote; Break }
+        "cloud" { Get-TerraformVersionRemote; Break }
+        $null { $null }
         Default { Get-TerraformVersionText }
+    }
+    
+    if ($null -eq $Version) {
+        $Version = '1'
     }
 
     return $Version
@@ -57,14 +63,20 @@ function Get-TerraformVersion {
 }
 
 function Get-TerraformVersionText {
-    $Content = Get-Content "*.tf" -ErrorAction Stop
-    Write-Verbose "Content: $Content"
+    $Content = Get-Content "*.tf" -ErrorAction Continue
+    if ($null -eq $Content) {
+        return $null
+    }
 
     $Pattern = 'required_version\s*=\s*\"[~>=\s]*(\d+)(\.\d+)?(\.\d+)?\"'
     $Search = $Content | Select-String -Pattern $Pattern
     $SearchMatches = $Search.Matches
 
     Write-Verbose "Matches: $SearchMatches"
+
+    If ($null -eq $SearchMatches) {
+        Return $null
+    }
 
     $Major = $SearchMatches[0].Groups[1]
     $Minor = $SearchMatches[0].Groups[2]
@@ -77,9 +89,14 @@ function Get-TerraformVersionText {
 }
 
 function Get-TerraformBackendType {
-    $Content = Get-Content -Raw *.tf
+    $Content = Get-Content -Raw *.tf -ErrorAction SilentlyContinue
+    if ($null -eq $Content) {
+        Write-Debug "Get-TerraformBackendType: no Terraform files found"
+        return $null
+    }
     $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*backend\s*\"([a-z]+)\"'
     if ($Null -eq $Search.Matches) {
+        # Second attempt, look for `cloud` syntax
         $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*(cloud)'
     }
     if ($Null -eq $Search.Matches) {
@@ -181,6 +198,44 @@ function Get-TerraformVersionRemote {
     return $Result
 }
 
+function Get-LatestTerraformVersion {
+    <#
+        Query Terraform website for the latest version matching $Version
+    #>
+    param(
+        $Version
+    )
+
+    $dotCount = ($Version | Select-String -Pattern '\.' -AllMatches).Matches.Count
+    Write-Verbose "Version: $Version`tDotCount: $dotCount"
+    if ($dotCount -ge 2) {
+        return $Version
+    }
+
+    Write-Debug "Got partial version, looking up the latest version for: $Version"
+    $proxy = [System.Net.WebRequest]::DefaultWebProxy
+    $proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
+    
+    $proxyUriBuilder = New-Object System.UriBuilder
+    $proxyUriBuilder.Scheme = $proxy.Address.Scheme
+    $proxyUriBuilder.Host = $proxy.Address.Host
+    $proxyUriBuilder.Port = $proxy.Address.Port
+    $proxyUri = $proxyUriBuilder.Uri                                                  
+    $TfUrl = "https://releases.hashicorp.com/terraform/"
+    $Response = Invoke-WebRequest -Uri $TfUrl -Proxy $ProxyUri -ErrorAction Stop
+    $Versions = $Response.Links.innerText
+    $Versions = $Versions | Where-Object { $_ -like 'terraform*' -and $_ -NotLike '*-*' }
+    $SortedVersions = $Versions | Sort-Object -Descending -Property {
+        $VersionComponents = ($_ -replace 'terraform_') -split '\.'
+        [version]::new($VersionComponents[0], $VersionComponents[1], $VersionComponents[2])
+    }
+    $LatestVersion = $SortedVersions | Where-Object { $_ -like "terraform_$Version*" } | Select-Object -First 1
+    $Version = $LatestVersion -replace 'terraform_', ''
+    Write-Debug "Latest version is: $Version"
+
+    return $Version
+}
+
 function Invoke-TerraformDownload {
     param(
         [Parameter(Mandatory = $true)][string]$Version,
@@ -188,6 +243,8 @@ function Invoke-TerraformDownload {
     )
 
     $InformationPreference = 'Continue'
+
+    $Version = Get-LatestTerraformVersion -Version $Version
 
     $TfPath = "$OutDir/tf-$Version.exe"
 
@@ -207,7 +264,6 @@ function Invoke-TerraformDownload {
         default { Throw "CPU Architecture cannot be determined: $env:PROCESSOR_ARCHITECTURE" }
     }
 
-    
     $proxy = [System.Net.WebRequest]::DefaultWebProxy
     $proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
     
@@ -216,22 +272,6 @@ function Invoke-TerraformDownload {
     $proxyUriBuilder.Host = $proxy.Address.Host
     $proxyUriBuilder.Port = $proxy.Address.Port
     $proxyUri = $proxyUriBuilder.Uri                                                  
-
-    $dotCount = ($Version | Select-String -Pattern '\.').Matches.Count
-    if ($dotCount -lt 2) {
-        Write-Debug "Got partial version, looking up the latest version for: $Version"
-        $TfUrl = "https://releases.hashicorp.com/terraform/"
-        $Response = Invoke-WebRequest -Uri $TfUrl -Proxy $ProxyUri -ErrorAction Stop
-        $Versions = $Response.Links.innerText
-        $Versions = $Versions | Where-Object { $_ -like 'terraform*' -and $_ -NotLike '*-*' }
-        $SortedVersions = $Versions | Sort-Object -Descending -Property {
-            $VersionComponents = ($_ -replace 'terraform_') -split '\.'
-            [version]::new($VersionComponents[0], $VersionComponents[1], $VersionComponents[2])
-        }
-        $LatestVersion = $SortedVersions | Where-Object { $_ -like "terraform_$Version*" } | Select-Object -First 1
-        $Version = $LatestVersion -replace 'terraform_', ''
-        Write-Debug "Latest version is: $Version"
-    }
 
     $TfUrl = "https://releases.hashicorp.com/terraform/${Version}/terraform_${Version}_windows_${arch}.zip"
     
@@ -294,6 +334,15 @@ function Invoke-TerraformInit {
     return $LASTEXITCODE
 }
 
+function Invoke-TerraformProviderLockFix {
+    $Params = "providers lock -platform=windows_amd64 -platform=darwin_amd64 -platform=linux_amd64" -split ' '
+    $TfCmd = @($TerraformPath)
+    $TfCmd += $Params
+    Write-Host "Attempting providers lock fix.."
+    Write-Debug "Exec: $($TfCmd -join ' ')"
+    Invoke-Expression "& $TfCmd"
+}
+
 function Remove-StateLock {
     param(
         # Mandatory
@@ -314,6 +363,11 @@ function Remove-StateLock {
 ###  Start
 ###
 
+$files = Get-ChildItem -Path *.tf -File -ErrorAction SilentlyContinue
+if ($null -eq $files) {
+    Throw "No terraform files found."
+}
+
 $IsTfEnvPsEffective = $TfEnvPsActive -or ($env:TF_ENV_PS_ACTIVE -eq 'true' -and !$PSBoundParameters.ContainsKey('TfEnvPsActive'))
 $InvokeTfDlParams = @{}
 if ($env:TF_ENV_PS_DIR) {
@@ -322,8 +376,16 @@ if ($env:TF_ENV_PS_DIR) {
 
 if ($IsTfEnvPsEffective) {
     $Version = Get-TerraformVersion
-    $Version.GetType()
+    Write-Verbose "`$Version.GetType()=$($Version.GetType())"
     $TerraformPath = Invoke-TerraformDownload -Version $Version @InvokeTfDlParams
+    Write-Output "Terraform path: $TerraformPath"
+    $ExeDir = Split-Path $TerraformPath
+    if ($env:PATH -notlike "*${ExeDir}*") {
+        if ($env:PATH[-1] -ne ';') {
+            $env:PATH += ';'
+        }
+        $env:PATH += "${ExeDir};"
+    }
 }
 
 $InitCompleted = $false
@@ -388,9 +450,9 @@ while ($retries -le 1) {
 
     switch ($lastError) {
         'InitNeeded' {
-            Invoke-TerraformInit -BackendType $BackendType
+            $Result = Invoke-TerraformInit -BackendType $BackendType
             $InitCompleted = $true
-            if ($LASTEXITCODE -ne 0) {
+            if ($Result -ne 0) {
                 Write-Error "Terraform init failed with exit code: $Result"
                 exit 1
             }
@@ -420,7 +482,7 @@ while ($retries -le 1) {
     $pattern = ($InitNeededErrors | ForEach-Object { [regex]::Escape($_) }) -join '|'
     Write-Host "Process output is:"
     Write-Host $ProcessOutput
-    $pattern
+    Write-Verbose "InitNeededErrors pattern: $pattern"
     if ($ProcessOutput -match $pattern) {
         Write-Debug 'Module not installed, Terraform init needed.'
         $lastError = 'InitNeeded'
@@ -515,6 +577,11 @@ while ($retries -le 1) {
         continue
     }
 
+    if ($processOutput -match 'provider-checksum-verification') {
+        Write-Debug "Lockfile hash issues detected."
+        Invoke-TerraformProviderLockFix
+        Continue
+    }
     # Error is not retriable, exiting.
     exit $LASTEXITCODE
 }
