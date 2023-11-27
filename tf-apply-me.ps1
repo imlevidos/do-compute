@@ -376,7 +376,7 @@ if ($env:TF_ENV_PS_DIR) {
 
 if ($IsTfEnvPsEffective) {
     $Version = Get-TerraformVersion
-    Write-Verbose "`$Version.GetType()=$($Version.GetType())"
+    Write-Output "Detected Terraform Version: $Version"
     $TerraformPath = Invoke-TerraformDownload -Version $Version @InvokeTfDlParams
     Write-Output "Terraform path: $TerraformPath"
     $ExeDir = Split-Path $TerraformPath
@@ -386,6 +386,7 @@ if ($IsTfEnvPsEffective) {
         }
         $env:PATH += "${ExeDir};"
     }
+    $env:TF = $TerraformPath
 }
 
 $InitCompleted = $false
@@ -472,12 +473,13 @@ while ($retries -le 1) {
 
     # Any retriable errors can be detected here
     $InitNeededErrors = @(
-        'module is not yet installed',
-        'Missing required provider',
-        'Please run "terraform init"',
-        'please run "terraform init"',
         'missing or corrupted provider plugins',
-        'Module not installed'
+        'Missing required provider',
+        'module is not yet installed',
+        'Module not installed',
+        'Module source has changed',
+        'please run "terraform init"',
+        'Please run "terraform init"'
     )
     $pattern = ($InitNeededErrors | ForEach-Object { [regex]::Escape($_) }) -join '|'
     Write-Host "Process output is:"
