@@ -23,7 +23,6 @@ function Get-TerraformVersion {
     $Version = switch ($Backend) {
         "remote" { Get-TerraformVersionRemote; Break }
         "cloud" { Get-TerraformVersionRemote; Break }
-        $null { $null }
         Default { Get-TerraformVersionText }
     }
     
@@ -100,6 +99,7 @@ function Get-TerraformBackendType {
         $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*(cloud)'
     }
     if ($Null -eq $Search.Matches) {
+        Write-Debug "Detected backend: None"
         return $Null
     }
     $Backend = $Search.Matches[0].Groups[1].Value
@@ -327,7 +327,7 @@ function Invoke-TerraformInit {
             $TfCmd += '-reconfigure'
         }
 
-        Write-Debug "Exec: $($TfCmd -join ' ')"
+        Write-Output "Executing: $($TfCmd -join ' ')"
         Invoke-Expression "& $TfCmd"
     }
 
@@ -460,8 +460,7 @@ while ($retries -le 1) {
         }
     }
 
-    # Validate Terraform files
-    Write-Debug 'Attempting: terraform validate'
+    Write-Output "Executing: $TerraformPath validate"
     & $TerraformPath validate 2>&1 | Tee-Object -Variable ProcessOutput
 
     if ($LASTEXITCODE -eq 0) {
@@ -540,7 +539,7 @@ while ($retries -le 1) {
 
     # Terraform Apply/Plan/Destroy
     # & $TerraformPath $Action $AutoApproveCmd $ShutDownCmd $args 2>&1 | Tee-Object -Variable ProcessOutput
-    Write-Debug "TerraformPath $TfArgs $args"
+    Write-Output "Executing: $TerraformPath $TfArgs $args"
     & $TerraformPath $TfArgs $args 2>&1 | Tee-Object -Variable ProcessOutput
 
     if ($LASTEXITCODE -eq 0) {
