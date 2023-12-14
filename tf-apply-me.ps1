@@ -578,7 +578,7 @@ while ($retries -le 1) {
         continue
     }
 
-    if ($processOutput -match 'provider-checksum-verification') {
+    if ($processOutput -match 'provider-checksum-verification|previously recorded in the dependency lock file') {
         Write-Debug "Lockfile hash issues detected."
         Invoke-TerraformProviderLockFix
         Continue
