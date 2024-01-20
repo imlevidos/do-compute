@@ -1,28 +1,32 @@
 ﻿<#
-.VERSION 2023.10.19
+.VERSION 2024.01.20
 #>
 
 param(
     [switch]${Auto-Approve},
-    [switch]$ReInit,
-    [string]$TerraformPath = 'tf',
+    [ValidateSet('apply', 'plan', 'destroy', 'init', 'state')][string]$Action = 'apply',
     [switch]$ShutDown,
-    [switch]$AuthOnly,
-    [switch]$TfEnvPsActive, # rename to -DownloadTerraform ?
+    [string[]]$TfArgs,
     [string]$VarFile,
-    [string[]]$TfApplyArgs,
-    [ValidateSet('apply', 'plan', 'destroy')][string]$Action = 'apply'
+    [string[]]$TfInitArgs,
+    [switch]$StateList,
+    [string[]]$StateShow,
+    [string]$TerraformPath,
+    [string]$TerraformVersion
 )
 
 $InformationPreference = 'SilentlyContinue'
-Write-Debug "Args: $args"
 
 function Get-TerraformVersion {
-    $Backend = Get-TerraformBackendType
+    param(
+        [string]$BackendType
+    )
 
-    $Version = switch ($Backend) {
-        "remote" { Get-TerraformVersionRemote; Break }
-        "cloud" { Get-TerraformVersionRemote; Break }
+    $Version = switch ($BackendType) {
+        'remote' { Get-TerraformVersionRemote; Break }
+        'cloud' { Get-TerraformVersionRemote; Break }
+        'none' { Get-TerraformVersionTfstate; Break }
+        # 'none' {}
         Default { Get-TerraformVersionText }
     }
     
@@ -61,8 +65,62 @@ function Get-TerraformVersion {
     # return $result
 }
 
+function Get-TerraformVersionTfstate {
+    $StateFile = './terraform.tfstate'
+    if (!(Test-Path $StateFile)) {
+        $StateFile = './.terraform/terraform.tfstate'
+        if (!(Test-Path $StateFile)) {
+            Write-Debug 'No terraform.tfstate file found.'
+            return $null
+        }
+    }
+
+    $Content = Get-Content $StateFile | ConvertFrom-Json
+    $Version = $Content.terraform_version
+    Write-Debug "Detected Terraform version in ${StateFile}: $Version"
+    return $Version
+}
+
+
+function Get-TerraformVersionRemote {
+    $Token = Get-TfeToken
+
+    $RepoConfigFile = './.terraform/terraform.tfstate'
+    if (!(Test-Path $RepoConfigFile)) {
+        Write-Debug "$RepoConfigFile not found, running terraform init"
+        & terraform init | Write-Debug
+        # Throw "Not found: $RepoConfigFile"
+    }
+
+    if (!(Test-Path $RepoConfigFile)) {
+        $Result = Get-TerraformRemoteDetails
+        $Server = $Result.Server
+        $Organization = $Result.Organization
+        $Workspace = $Result.Workspace
+    }
+    else {
+        $Config = Get-Content $RepoConfigFile | ConvertFrom-Json
+        $Server = $Config.backend.config.hostname
+        $Organization = $Config.backend.config.organization
+        $Workspace = $Config.backend.config.workspaces[0].name
+    }
+
+    $Params = @{
+        'Server'       = $Server
+        'Organization' = $Organization
+        'Workspace'    = $Workspace
+        'Token'        = $Token
+    }
+
+    $WorkspaceData = Get-TfeWorkspace @Params
+    $Result = $WorkspaceData.attributes.'terraform-version'
+    Write-Verbose "$($WorkspaceData.attributes)"
+    Write-Debug "Detected Terraform version from remote: $Result"
+    return $Result
+}
+
 function Get-TerraformVersionText {
-    $Content = Get-Content "*.tf" -ErrorAction Continue
+    $Content = Get-Content '*.tf' -ErrorAction Continue
     if ($null -eq $Content) {
         return $null
     }
@@ -88,9 +146,9 @@ function Get-TerraformVersionText {
 }
 
 function Get-TerraformBackendType {
-    $Content = Get-Content -Raw *.tf -ErrorAction SilentlyContinue
+    $Content = Get-TfContent -Raw
     if ($null -eq $Content) {
-        Write-Debug "Get-TerraformBackendType: no Terraform files found"
+        Write-Debug 'Get-TerraformBackendType: no Terraform files found'
         return $null
     }
     $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*backend\s*\"([a-z]+)\"'
@@ -99,8 +157,8 @@ function Get-TerraformBackendType {
         $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*(cloud)'
     }
     if ($Null -eq $Search.Matches) {
-        Write-Debug "Detected backend: None"
-        return $Null
+        Write-Debug 'Detected backend: None'
+        return 'none'
     }
     $Backend = $Search.Matches[0].Groups[1].Value
     Write-Debug "Detected backend: $Backend"
@@ -108,18 +166,37 @@ function Get-TerraformBackendType {
 }
 
 function Get-TfeToken {
-    $CliConfigFile = "$env:APPDATA/terraform.rc"
-    if (!(Test-Path $CliConfigFile)) {
-        Throw "Not found: $CliConfigFile"
+    param(
+        [string]$Server = ''
+    )
+    # Try terraform.rc
+    $CliConfigFileRc = "$env:APPDATA/terraform.rc"
+    if (Test-Path $CliConfigFileRc) {
+        if (!$Server) {
+            $Server = '.*'
+        }
+        $Pattern = "credentials\s*`"$Server`"\s*{[\s\n]*token\s*=\s*\`"(.*)`""
+        $Search = Get-Content -Raw $CliConfigFileRc | Select-String -Pattern $Pattern
+        if ($Null -eq $Search.Matches) {
+            Throw "Error extracting token from cli config: $CliConfigFileRc"
+        }
+        $Result = $Search.Matches.Groups[1].Value
+        return $Result
     }
-    $Server = '.*'
-    $Pattern = "credentials\s*`"$Server`"\s*{[\s\n]*token\s*=\s*\`"(.*)`""
-    $Search = Get-Content -Raw $CliConfigFile | Select-String -Pattern $Pattern
-    if ($Null -eq $Search.Matches) {
-        Throw "Error extracting token from cli config: $CliConfigFile"
+    # Try credentials.tfrc.json
+    $CliConfigFileTfrc = "$env:APPDATA/terraform.d/credentials.tfrc.json"
+    if (Test-Path $CliConfigFileTfrc) {
+        if (!$Server) {
+            $Server = 'app.terraform.io'
+        }
+        $Content = Get-Content -Raw $CliConfigFileTfrc | ConvertFrom-Json
+        $Result = $Content.credentials.$Server.token
+        if ($null -eq $Result) {
+            Throw "Cannot find token for $Server in: $CliConfigFileTfrc"
+        }
+        return $Result
     }
-    $Result = $Search.Matches.Groups[1].Value
-    return $Result
+    Throw "Unable to find Terraform token in $CliConfigFileRc or $CliConfigFileTfrc"
 }
 
 function Get-TfeWorkspace {
@@ -131,8 +208,8 @@ function Get-TfeWorkspace {
     )
 
     $Headers = @{
-        "Authorization" = "Bearer $TOKEN"
-        "Content-Type"  = "application/vnd.api+json"
+        'Authorization' = "Bearer $TOKEN"
+        'Content-Type'  = 'application/vnd.api+json'
     }
     
     $URL = "https://$Server/api/v2/organizations/$Organization/workspaces/$Workspace"
@@ -143,58 +220,99 @@ function Get-TfeWorkspace {
     return $Result
 }
 
+function Get-TfContent {
+    <#
+    .SYNOPSIS
+        Get Terraform content from files, filters out comments
+    .VERSION
+        2024.01.20
+    #>
+    
+    param(
+        [string]$Path = './*.tf',
+        [switch]$Raw
+    )
+
+    $SpecialModes = "\/\*|\*\/|\/\/|\`"|#"
+    $MLCommentLevel = 0
+
+    $Content = Get-Content $Path
+    $Filtered = @()
+    foreach ($line in $Content) {
+        if ($MLCommentLevel -gt 0) {
+            if ($line -match '\*\/') {
+                $line = $line -replace '.*\*\/', ''
+                $MLCommentLevel = 0
+            }
+            else {
+                continue
+            }
+        }
+        
+        $CommentLineCheck = $line
+        do {
+            $Search = Select-String -InputObject $CommentLineCheck -Pattern $SpecialModes -AllMatches
+            if ($Search) {
+                switch ($search.Matches.Groups[0].Value) {
+                    '"' {
+                        $CommentLineCheck = $CommentLineCheck -replace "`".*?`"", ''
+                    }
+                    '#' {
+                        $CommentLineCheck = $CommentLineCheck -replace '#.*$', ''
+                        $line = $line -replace '#.*$', ''
+                    }
+                    '/*' {
+                        if ($CommentLineCheck -match '\/\*.*\*\/') {
+                            # Comment is closed on the same line
+                            $CommentLineCheck = $CommentLineCheck -replace '\/\*.*?\*\/', ''
+                            $line = $line -replace '\/\*.*?\*\/', ''
+                        }
+                        else {
+                            $MLCommentLevel++
+                            $CommentLineCheck = $CommentLineCheck -replace '\/\*.*', ''
+                            $line = $line -replace '\/\*.*', ''
+                        }
+                    }
+                    '*/' {
+                        $MLCommentLevel = 0
+                        $CommentLineCheck = $CommentLineCheck -replace '.*\*\/', ''
+                        $line = $line -replace '.*\*\/', ''
+                    }
+                }
+    
+            }
+        } while ($Search)
+
+        if ($line -match '^\s*$') {
+            continue
+        }
+
+        $Filtered += $line
+    }
+
+    if ($Raw) {
+        $Filtered = $Filtered -join "`r`n"
+    }
+
+    return $Filtered
+}
+
 function Get-TerraformRemoteDetails {
     $Content = Get-Content -Raw *.tf 
     $Search = $Content | Select-String -Pattern 'terraform\s*{[\s\n]*backend\s*\"[a-z]+\"\s*{[\s\n]*hostname\s*=\s*\"(.*)\"[\s\n]*organization\s*=\s*\"(.*)\"[\s\n]*workspaces\s*{[\s\n]*(?:#.*\n)\s*name\s*=\s*\"(.*)\"'
 
     if ($null -eq $Search) {
-        Throw "Unable to get Terraform Remote details from code."
+        Throw 'Unable to get Terraform Remote details from code.'
     }
 
     $Result = @{
-        "Server"       = $Search.Matches[0].Groups[1].Value
-        "Organization" = $Search.Matches[0].Groups[2].Value
-        "Workspace"    = $Search.Matches[0].Groups[3].Value
+        'Server'       = $Search.Matches[0].Groups[1].Value
+        'Organization' = $Search.Matches[0].Groups[2].Value
+        'Workspace'    = $Search.Matches[0].Groups[3].Value
     }
 
     Write-Debug "Detected Terraform remote settings from code: $($Result | Out-String)"
 
-    return $Result
-}
-
-function Get-TerraformVersionRemote {
-    $Token = Get-TfeToken
-
-    $RepoConfigFile = './.terraform/terraform.tfstate'
-    if (!(Test-Path $RepoConfigFile)) {
-        & terraform init | Write-Debug
-        # Throw "Not found: $RepoConfigFile"
-    }
-
-    if (!(Test-Path $RepoConfigFile)) {
-        $Result = Get-TerraformRemoteDetails
-        $Server = $Result.Server
-        $Organization = $Result.Organization
-        $Workspace = $Result.Workspace
-    }
-    else {
-        $Config = Get-Content $RepoConfigFile | ConvertFrom-Json
-        $Server = $Config.backend.config.hostname
-        $Organization = $Config.backend.config.organization
-        $Workspace = $Config.backend.config.workspaces[0].name
-    }
-
-    $Params = @{
-        "Server"       = $Server
-        "Organization" = $Organization
-        "Workspace"    = $Workspace
-        "Token"        = $Token
-    }
-
-    $WorkspaceData = Get-TfeWorkspace @Params
-    $Result = $WorkspaceData.attributes.'terraform-version'
-    Write-Verbose "$($WorkspaceData.attributes)"
-    Write-Debug "Detected Terraform version from remote: $Result"
     return $Result
 }
 
@@ -221,7 +339,7 @@ function Get-LatestTerraformVersion {
     $proxyUriBuilder.Host = $proxy.Address.Host
     $proxyUriBuilder.Port = $proxy.Address.Port
     $proxyUri = $proxyUriBuilder.Uri                                                  
-    $TfUrl = "https://releases.hashicorp.com/terraform/"
+    $TfUrl = 'https://releases.hashicorp.com/terraform/'
     $Response = Invoke-WebRequest -Uri $TfUrl -Proxy $ProxyUri -ErrorAction Stop
     $Versions = $Response.Links.innerText
     $Versions = $Versions | Where-Object { $_ -like 'terraform*' -and $_ -NotLike '*-*' }
@@ -230,6 +348,11 @@ function Get-LatestTerraformVersion {
         [version]::new($VersionComponents[0], $VersionComponents[1], $VersionComponents[2])
     }
     $LatestVersion = $SortedVersions | Where-Object { $_ -like "terraform_$Version*" } | Select-Object -First 1
+    Write-Verbose "Latest version for $Version is: $LatestVersion"
+    if ([string]::IsNullOrEmpty($LatestVersion)) {
+        Write-Warning "Available Terrarform versions: $SortedVersions"
+        Throw "Unable to find version for: $Version"
+    }
     $Version = $LatestVersion -replace 'terraform_', ''
     Write-Debug "Latest version is: $Version"
 
@@ -239,8 +362,12 @@ function Get-LatestTerraformVersion {
 function Invoke-TerraformDownload {
     param(
         [Parameter(Mandatory = $true)][string]$Version,
-        [string]$OutDir = "$env:TEMP/.tf.env.ps"
+        [string]$OutDir
     )
+
+    if ([string]::IsNullOrEmpty($OutDir)) {
+        $OutDir = "$env:TEMP/.tf.env.ps"
+    }
 
     $InformationPreference = 'Continue'
 
@@ -249,7 +376,9 @@ function Invoke-TerraformDownload {
     $TfPath = "$OutDir/tf-$Version.exe"
 
     if (Test-Path $TfPath) {
+        $TfPath = Resolve-Path $TfPath | Select-Object -ExpandProperty Path
         Write-Debug "Terraform version already cached: $TfPath"
+        
         return $TfPath
     }
 
@@ -276,10 +405,18 @@ function Invoke-TerraformDownload {
     $TfUrl = "https://releases.hashicorp.com/terraform/${Version}/terraform_${Version}_windows_${arch}.zip"
     
     Write-Information "Downloading Terraform v${Version} to: $TfPath"
-    Invoke-WebRequest -Uri $TfUrl -OutFile $TfArchive -Proxy $ProxyUri -ErrorAction Stop
+    # Invoke-WebRequest -Uri $TfUrl -OutFile $TfArchive -Proxy $ProxyUri -ErrorAction Stop
+    $webClient = New-Object System.Net.WebClient
+    if ($ProxyUri) {
+        $webClient.Proxy = New-Object System.Net.WebProxy($ProxyUri)
+    }
+    $webClient.DownloadFile($TfUrl, $TfArchive)
+
     Expand-Archive -Path $TfArchive -DestinationPath $OutDir -Force -ErrorAction Stop
     Remove-Item -Path $TfArchive
     Rename-Item -Path "$OutDir/terraform.exe" -NewName $TfPath
+
+    $TFPath = Resolve-Path $TfPath | Select-Object -ExpandProperty Path
 
     # Test
     $Test = & $TfPath version
@@ -298,17 +435,21 @@ function Invoke-TerraformDownload {
 }
 
 function Get-IsGoogleTokenRequired {
-    $Content = Get-Content -Raw *.tf
+    $Content = Get-TfContent -Raw
     $Search = $Content | Select-String -Pattern 'variable\s*"GOOGLE_ACCESS_TOKEN"\s*{'
     $IsGoogleTokenRequired = $Null -ne $Search.Matches
-    Write-Debug "GOOGLE_ACCESS_TOKEN required: $IsGoogleTokenRequired"
+    if ($IsGoogleTokenRequired) {
+        Write-Debug "GOOGLE_ACCESS_TOKEN required: $IsGoogleTokenRequired"
+    }
     return $IsGoogleTokenRequired
 }
 
 function Invoke-TerraformInit {
     param(
-        [bool]$Reconfigure = $true,
-        [string]$BackendType
+        [Parameter(Mandatory = $true)][string]$TerraformPath,
+        [Parameter(Mandatory = $true)][string]$BackendType,
+        [bool]$Reconfigure,
+        [string[]]$TfInitArgs
     )
     $InformationPreference = 'Continue'
 
@@ -319,6 +460,9 @@ function Invoke-TerraformInit {
     }
     else {
         $TfCmd = @($TerraformPath, 'init')
+        if ($TfInitArgs) {
+            $TfCmd += $TfInitArgs
+        }
 
         if ($BackendType -eq 'gcs') {
             $TfCmd += "-backend-config=`"access_token=$env:TF_VAR_GOOGLE_ACCESS_TOKEN`""
@@ -327,20 +471,80 @@ function Invoke-TerraformInit {
             $TfCmd += '-reconfigure'
         }
 
-        Write-Output "Executing: $($TfCmd -join ' ')"
-        Invoke-Expression "& $TfCmd"
+        Write-ExecCmd -Arguments $TfCmd
+        Invoke-Expression "& $TfCmd" | Write-Host
     }
 
-    return $LASTEXITCODE
+    if ($LASTEXITCODE -ne 0) {
+        Throw "Terraform init failed with exit code: $LASTEXITCODE"
+    }
 }
 
 function Invoke-TerraformProviderLockFix {
-    $Params = "providers lock -platform=windows_amd64 -platform=darwin_amd64 -platform=linux_amd64" -split ' '
+    $Params = 'providers lock -platform=windows_amd64 -platform=darwin_amd64 -platform=linux_amd64' -split ' '
     $TfCmd = @($TerraformPath)
     $TfCmd += $Params
-    Write-Host "Attempting providers lock fix.."
-    Write-Debug "Exec: $($TfCmd -join ' ')"
-    Invoke-Expression "& $TfCmd"
+    Write-Host 'Attempting providers lock fix..'
+    # Write-Host "`n[ EXEC ]: $($TfCmd -join ' ')" -ForegroundColor Green
+    Write-ExecCmd -Arguments $TfCmd
+    Invoke-Expression "& $TfCmd" | Write-Host
+}
+
+function Invoke-TerraformValidate {
+    param(
+        [string]$BackendType,
+        [string]$TerraformPath,
+        [string[]]$TfInitArgs
+    )
+
+    $lastError = $null
+    $retries = 0
+
+    # Terraform Init Loop
+    while ($retries -le 1) {
+        $retries++;
+
+        switch ($lastError) {
+            'InitNeeded' {
+                Invoke-TerraformInit -TerraformPath $TerraformPath -BackendType $BackendType -TfInitArgs $TfInitArgs
+                # if ($Result -ne 0) {
+                #     Throw "Terraform init failed with exit code: $Result"
+                # }
+            }
+        }
+
+        Write-ExecCmd -Arguments @($TerraformPath, 'validate')
+        & $TerraformPath validate 2>&1 | Tee-Object -Variable ProcessOutput | Write-Host
+
+        if ($LASTEXITCODE -eq 0) {
+            Write-Verbose 'Terraform validate success.'
+            Return
+        }
+
+        Write-Debug 'Error running Terraform validate'
+
+        # Any retriable errors can be detected here
+        $InitNeededErrors = @(
+            'missing or corrupted provider plugins',
+            'Missing required provider',
+            'module is not yet installed',
+            'Module not installed',
+            'Module source has changed',
+            'please run "terraform init"',
+            'Please run "terraform init"'
+        )
+        $pattern = ($InitNeededErrors | ForEach-Object { [regex]::Escape($_) }) -join '|'
+        # Write-Verbose 'Process output is:'
+        # Write-Verbose $($ProcessOutput | Out-String)
+        # Write-Verbose "REGEX PATTERN: $pattern"
+        if ($ProcessOutput -match $pattern) {
+            Write-Debug 'Module not installed, Terraform init needed.'
+            $lastError = 'InitNeeded'
+            Continue
+        }
+
+        Throw 'Error running Terraform validate. This error is not retriable.'
+    }
 }
 
 function Remove-StateLock {
@@ -358,6 +562,15 @@ function Remove-StateLock {
     & gcloud storage rm $LockPath
 }
 
+function Write-ExecCmd {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments
+    )
+    $Arguments = $Arguments -join ' '
+    Write-Host "`nEXEC: " -NoNewline -ForegroundColor Green
+    Write-Host "$Arguments`n" -ForegroundColor White
+}
+
 
 ###
 ###  Start
@@ -365,20 +578,28 @@ function Remove-StateLock {
 
 $files = Get-ChildItem -Path *.tf -File -ErrorAction SilentlyContinue
 if ($null -eq $files) {
-    Throw "No terraform files found."
+    Throw 'No terraform files found.'
 }
 
-$IsTfEnvPsEffective = $TfEnvPsActive -or ($env:TF_ENV_PS_ACTIVE -eq 'true' -and !$PSBoundParameters.ContainsKey('TfEnvPsActive'))
 $InvokeTfDlParams = @{}
 if ($env:TF_ENV_PS_DIR) {
     $InvokeTfDlParams['OutDir'] = $env:TF_ENV_PS_DIR
 }
 
-if ($IsTfEnvPsEffective) {
-    $Version = Get-TerraformVersion
-    Write-Output "Detected Terraform Version: $Version"
-    $TerraformPath = Invoke-TerraformDownload -Version $Version @InvokeTfDlParams
-    Write-Output "Terraform path: $TerraformPath"
+$IsGoogleTokenRequired = Get-IsGoogleTokenRequired
+$BackendType = Get-TerraformBackendType
+
+if (!$TerraformPath) {
+    $Version = $TerraformVersion
+    if (!$Version) {
+        # Detect Terraform Version
+        $Version = Get-TerraformVersion -BackendType $BackendType
+        Write-Host "Detected Terraform Version: $Version"
+    }
+
+    # Download Terraform or use cached version
+    $TerraformPath = Invoke-TerraformDownload -Version $Version -OutDir $env:TF_ENV_PS_DIR
+    Write-Output "& `$env:TF = `"$TerraformPath`""
     $ExeDir = Split-Path $TerraformPath
     if ($env:PATH -notlike "*${ExeDir}*") {
         if ($env:PATH[-1] -ne ';') {
@@ -386,32 +607,14 @@ if ($IsTfEnvPsEffective) {
         }
         $env:PATH += "${ExeDir};"
     }
-    $env:TF = $TerraformPath
 }
+$env:TF = $TerraformPath   
 
-$InitCompleted = $false
-
-if ($Action -eq 'plan') {
-    $args += '-detailed-exitcode'
-}
-
-$IsGoogleTokenRequired = Get-IsGoogleTokenRequired
-$BackendType = Get-TerraformBackendType
 
 if ($IsGoogleTokenRequired) {
     $env:TF_VAR_GOOGLE_ACCESS_TOKEN = "$(gcloud auth print-access-token)"
     $env:GOOGLE_ACCESS_TOKEN = $env:TF_VAR_GOOGLE_ACCESS_TOKEN  
 }
-if ($AuthOnly) {
-    Invoke-TerraformInit -BackendType $BackendType
-    exit 0
-}
-
-if ($ReInit) {
-    Invoke-TerraformInit -BackendType $BackendType
-    $InitCompleted = $true
-}
-
 
 # Check the validity of the token if the file exists.
 # No longer needed because we're doing auth at each run, but useful code to keep around.
@@ -442,83 +645,47 @@ if ($ReInit) {
 #   Write-Host 'File token-google.secret does not exist'
 # }
 
-$retries = 0
-$lastError = ''
-
-# Terraform Init Loop
-while ($retries -le 1) {
-    $retries++;
-
-    switch ($lastError) {
-        'InitNeeded' {
-            $Result = Invoke-TerraformInit -BackendType $BackendType
-            $InitCompleted = $true
-            if ($Result -ne 0) {
-                Write-Error "Terraform init failed with exit code: $Result"
-                exit 1
-            }
-        }
-    }
-
-    Write-Output "Executing: $TerraformPath validate"
-    & $TerraformPath validate 2>&1 | Tee-Object -Variable ProcessOutput
-
-    if ($LASTEXITCODE -eq 0) {
-        Write-Verbose 'Terraform validate success.'
-        break
-    }
-
-    Write-Debug 'Error running Terraform validate'
-
-    # Any retriable errors can be detected here
-    $InitNeededErrors = @(
-        'missing or corrupted provider plugins',
-        'Missing required provider',
-        'module is not yet installed',
-        'Module not installed',
-        'Module source has changed',
-        'please run "terraform init"',
-        'Please run "terraform init"'
-    )
-    $pattern = ($InitNeededErrors | ForEach-Object { [regex]::Escape($_) }) -join '|'
-    Write-Host "Process output is:"
-    Write-Host $ProcessOutput
-    Write-Verbose "InitNeededErrors pattern: $pattern"
-    if ($ProcessOutput -match $pattern) {
-        Write-Debug 'Module not installed, Terraform init needed.'
-        $lastError = 'InitNeeded'
-        continue
-    }
-
-    # Error is not retriable, exiting.
-    Write-Information 'Terraform validation failed!'
-    exit $LASTEXITCODE
+if ($StateList) {
+    Write-ExecCmd -Arguments @($TerraformPath, 'state list')
+    & $TerraformPath state list
+    exit 0
 }
 
-if (!$InitCompleted) {
-    Invoke-TerraformInit -BackendType $BackendType
-    $InitCompleted = $true
+if ($StateShow) {
+    Write-ExecCmd -Arguments @($TerraformPath, 'state show', $StateShow -replace '"', '\"')
+    & $TerraformPath state show ($StateShow -replace '"', '\"')
+    exit 0
+}
+
+if ($Action -in @('validate', 'plan', 'apply', 'destroy')) {
+    Invoke-TerraformValidate -TerraformPath $TerraformPath -BackendType $BackendType -TfInitArgs $TfInitArgs
+}
+
+if ($Action -eq 'init') {
+    Invoke-TerraformInit -TerraformPath $TerraformPath -BackendType $BackendType -TfInitArgs $TfInitArgs
+}
+
+if ($Action -eq 'init') {
+    exit 0
 }
 
 ###
 ###  Plan/Apply prep
 ### 
 
-$TfArgs = @($Action)
+$TfArgs = @($Action) + $TfArgs
 
-switch ($True) {
-    { ${Auto-Approve} -and $Action -ne 'plan' } { 
-        $TfArgs += '-auto-approve' 
-    }
-    { $ShutDown } { 
-        $TfArgs += '-var=shutdown=true'
-    }
-    { $VarFile } {
-        $TfArgs += "-var-file=$VarFile"
-    }
-    { $TfApplyArgs } {
-        $TfArgs += $TfApplyArgs
-    }
+if ($Action -eq 'plan') {
+    $TfArgs += '-detailed-exitcode'
+}
+if ($ShutDown) {
+    $TfArgs += '-var=shutdown=true'
+}
+if (${Auto-Approve}) {
+    $TfArgs += '-auto-approve'
+}
+if ($VarFile) {
+    $TfArgs += "-var-file=$VarFile"
 }
 
 Write-Information "Starting Terraform ${Action}..`n"
@@ -538,9 +705,8 @@ while ($retries -le 1) {
     # $env:TF_VAR_GOOGLE_ACCESS_TOKEN = $(Get-Content .\token-google.secret)
 
     # Terraform Apply/Plan/Destroy
-    # & $TerraformPath $Action $AutoApproveCmd $ShutDownCmd $args 2>&1 | Tee-Object -Variable ProcessOutput
-    Write-Output "Executing: $TerraformPath $TfArgs $args"
-    & $TerraformPath $TfArgs $args 2>&1 | Tee-Object -Variable ProcessOutput
+    Write-ExecCmd -Arguments @($TerraformPath, $TfArgs)
+    & $TerraformPath $TfArgs 2>&1 | Tee-Object -Variable ProcessOutput
 
     if ($LASTEXITCODE -eq 0) {
         Write-Verbose "Terraform ${Action} success."
@@ -579,7 +745,7 @@ while ($retries -le 1) {
     }
 
     if ($processOutput -match 'provider-checksum-verification|previously recorded in the dependency lock file') {
-        Write-Debug "Lockfile hash issues detected."
+        Write-Debug 'Lockfile hash issues detected.'
         Invoke-TerraformProviderLockFix
         Continue
     }
@@ -587,7 +753,16 @@ while ($retries -le 1) {
     exit $LASTEXITCODE
 }
 
-if ($Action -ne 'plan') {
+if ($Action -in @('apply', 'destroy', 'output')) {
     & $TerraformPath output > tf-output.txt
     Write-Host 'Updated tf-output.txt'
+    if (Test-Path '.gitignore') {
+        $gitignore = Get-Content '.gitignore'
+        if ($gitignore -notlike 'tf-output.txt') {
+            Add-Content '.gitignore' 'tf-output.txt'
+        }
+        if ($gitignore -notlike 'tfplans') {
+            Add-Content '.gitignore' 'tfplans'
+        }
+    }
 }
