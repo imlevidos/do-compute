@@ -1,23 +1,30 @@
 ﻿<#
-.VERSION 2024.01.20
+.VERSION 2024.01.21
 #>
 
 param(
     [switch]${Auto-Approve},
-    [ValidateSet('apply', 'plan', 'destroy', 'init', 'state')][string]$Action = 'apply',
+    [ValidateSet('apply', 'plan', 'destroy', 'init', 'state', 'import')][string]$Action = 'apply',
     [switch]$ShutDown,
     [string[]]$TfArgs,
     [string]$VarFile,
     [string[]]$TfInitArgs,
     [switch]$StateList,
-    [string[]]$StateShow,
+    [switch]$StateShow,
     [string]$TerraformPath,
     [string]$TerraformVersion
 )
 
 $InformationPreference = 'SilentlyContinue'
 
+Write-Verbose 'Verbose ON'
+Write-Debug 'Debug ON'
+
 function Get-TerraformVersion {
+    <#
+    .SYNOPSIS
+        Try to detect the Terraform Version
+    #>
     param(
         [string]$BackendType
     )
@@ -81,6 +88,19 @@ function Get-TerraformVersionTfstate {
     return $Version
 }
 
+function Get-TerraformInitDetails {
+    $InitFile = './.terraform/terraform.tfstate'
+    $InitDetails = Get-Content -Path $InitFile | ConvertFrom-Json
+
+    $Result = @{
+        'backend_type' = $InitDetails.backend.type
+        'hostname'     = $InitDetails.backend.config.hostname
+        'organization' = $InitDetails.backend.config.organization
+        'workspaces'   = $InitDetails.backend.config.workspaces
+        'token'        = $InitDetails.backend.config.token
+    }
+    Return $Result
+}
 
 function Get-TerraformVersionRemote {
     $Token = Get-TfeToken
@@ -88,12 +108,14 @@ function Get-TerraformVersionRemote {
     $RepoConfigFile = './.terraform/terraform.tfstate'
     if (!(Test-Path $RepoConfigFile)) {
         Write-Debug "$RepoConfigFile not found, running terraform init"
+        $OldDebugPreference, $DebugPreference = $DebugPreference, 'Continue'
         & terraform init | Write-Debug
-        # Throw "Not found: $RepoConfigFile"
+        $DebugPreference = $OldDebugPreference
     }
 
     if (!(Test-Path $RepoConfigFile)) {
-        $Result = Get-TerraformRemoteDetails
+        Write-Verbose 'Terraform Init possibly failed, trying to get remote details from code.'
+        $Result = Get-TerraformRemoteDetailsFromCode
         $Server = $Result.Server
         $Organization = $Result.Organization
         $Workspace = $Result.Workspace
@@ -101,6 +123,9 @@ function Get-TerraformVersionRemote {
     else {
         $Config = Get-Content $RepoConfigFile | ConvertFrom-Json
         $Server = $Config.backend.config.hostname
+        if (!$Server) {
+            $Server = 'app.terraform.io'
+        }
         $Organization = $Config.backend.config.organization
         $Workspace = $Config.backend.config.workspaces[0].name
     }
@@ -114,7 +139,7 @@ function Get-TerraformVersionRemote {
 
     $WorkspaceData = Get-TfeWorkspace @Params
     $Result = $WorkspaceData.attributes.'terraform-version'
-    Write-Verbose "$($WorkspaceData.attributes)"
+    Write-Verbose "TFE Workspace Attributes: $($WorkspaceData.attributes)"
     Write-Debug "Detected Terraform version from remote: $Result"
     return $Result
 }
@@ -297,7 +322,7 @@ function Get-TfContent {
     return $Filtered
 }
 
-function Get-TerraformRemoteDetails {
+function Get-TerraformRemoteDetailsFromCode {
     $Content = Get-Content -Raw *.tf 
     $Search = $Content | Select-String -Pattern 'terraform\s*{[\s\n]*backend\s*\"[a-z]+\"\s*{[\s\n]*hostname\s*=\s*\"(.*)\"[\s\n]*organization\s*=\s*\"(.*)\"[\s\n]*workspaces\s*{[\s\n]*(?:#.*\n)\s*name\s*=\s*\"(.*)\"'
 
@@ -571,11 +596,11 @@ function Write-ExecCmd {
     Write-Host "$Arguments`n" -ForegroundColor White
 }
 
-
 ###
-###  Start
+###   [ START ]
 ###
 
+Write-Verbose 'Checking for terraform files..'
 $files = Get-ChildItem -Path *.tf -File -ErrorAction SilentlyContinue
 if ($null -eq $files) {
     Throw 'No terraform files found.'
@@ -608,12 +633,16 @@ if (!$TerraformPath) {
         $env:PATH += "${ExeDir};"
     }
 }
+
+$TerraformPath = Get-Command $TerraformPath | Select-Object -ExpandProperty Source
 $env:TF = $TerraformPath   
 
 
 if ($IsGoogleTokenRequired) {
     $env:TF_VAR_GOOGLE_ACCESS_TOKEN = "$(gcloud auth print-access-token)"
-    $env:GOOGLE_ACCESS_TOKEN = $env:TF_VAR_GOOGLE_ACCESS_TOKEN  
+    $env:GOOGLE_ACCESS_TOKEN = $env:TF_VAR_GOOGLE_ACCESS_TOKEN
+    Write-Host 'Retrieved: GOOGLE_ACCESS_TOKEN'
+    Invoke-TerraformInit -TerraformPath $TerraformPath -BackendType $BackendType -TfInitArgs $TfInitArgs
 }
 
 # Check the validity of the token if the file exists.
@@ -652,8 +681,14 @@ if ($StateList) {
 }
 
 if ($StateShow) {
-    Write-ExecCmd -Arguments @($TerraformPath, 'state show', $StateShow -replace '"', '\"')
-    & $TerraformPath state show ($StateShow -replace '"', '\"')
+    Write-ExecCmd -Arguments @($TerraformPath, 'state list')
+    $TfStateList = & $TerraformPath state list
+    $Selection = $TfStateList | Out-GridView -Title 'Select resources to show' -PassThru
+
+    foreach ($item in $Selection) {
+        & $TerraformPath state show ($item -replace '"', '\"') | Tee-Object -Variable TfStateList
+        $env:StateList += $TfStateList
+    }
     exit 0
 }
 
@@ -687,6 +722,10 @@ if (${Auto-Approve}) {
 if ($VarFile) {
     $TfArgs += "-var-file=$VarFile"
 }
+
+###
+###  Terraform Apply/Plan/Destroy
+###
 
 Write-Information "Starting Terraform ${Action}..`n"
 
@@ -736,7 +775,12 @@ while ($retries -le 1) {
         }
 
         $lockPath = $match.Groups[1].Value
-        Write-Debug "Detected lock path: $lockPath"
+        if ([string]::IsNullOrEmpty($lockPath)) {
+            Write-Error 'Unable to parse lock path from error message'
+            exit 1
+        }
+        
+        Write-Warning "Detected lock path: $lockPath, attempting to remove.."
 
         Remove-StateLock -LockPath $lockPath
     
@@ -745,17 +789,27 @@ while ($retries -le 1) {
     }
 
     if ($processOutput -match 'provider-checksum-verification|previously recorded in the dependency lock file') {
-        Write-Debug 'Lockfile hash issues detected.'
+        Write-Warning 'Lockfile hash issues detected.'
         Invoke-TerraformProviderLockFix
         Continue
     }
+
+    if ($processOutput -match "run 'gcloud auth application-default login'") {
+        Throw 'Google Authentication not configured when using a remote backend.'
+        Write-Warning 'Need a fresh GOOGLE_AUTH_TOKEN.'
+        Write-ExecCmd -Arguments @('gcloud auth application-default login --no-launch-browser')
+        & gcloud auth application-default login --no-launch-browser | Tee-Object -Variable ProcessOutput
+
+        Continue
+    }
+
     # Error is not retriable, exiting.
     exit $LASTEXITCODE
 }
 
 if ($Action -in @('apply', 'destroy', 'output')) {
     & $TerraformPath output > tf-output.txt
-    Write-Host 'Updated tf-output.txt'
+    Write-Host "`nUpdated tf-output.txt" -ForegroundColor DarkGray
     if (Test-Path '.gitignore') {
         $gitignore = Get-Content '.gitignore'
         if ($gitignore -notlike 'tf-output.txt') {
