@@ -601,10 +601,10 @@ function Invoke-TerraformOutput {
         $Messages += { Write-ExecCmd -Header 'SAVED' -Arguments '-> tf-output.txt' } # -HeaderColor DarkGray -ArgumentsColor DarkGray
         if (Test-Path '.gitignore') {
             $gitignore = Get-Content '.gitignore'
-            if ($gitignore -notlike 'tf-output.txt') {
+            if (-not $gitignore -like 'tf-output.txt') {
                 Add-Content '.gitignore' 'tf-output.txt'
             }
-            if ($gitignore -notlike 'tfplans') {
+            if (-not $gitignore -like 'tfplans') {
                 Add-Content '.gitignore' 'tfplans'
             }
         }
