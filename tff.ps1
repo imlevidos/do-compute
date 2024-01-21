@@ -649,7 +649,7 @@ function Remove-StateLock {
     & gcloud storage rm $LockPath
 }
 
-function TfStateShow {
+function Invoke-TfStateShow {
     param(
         [Parameter(Mandatory = $true)][string]$TerraformPath
     )
@@ -659,7 +659,9 @@ function TfStateShow {
     $global:TfStateShowData = @()
 
     foreach ($item in $Selection) {
-        & $TerraformPath state show ($item -replace '"', '\"') | Tee-Object -Variable TfStateList
+        $item = $item -replace '"', '\"'
+        Write-ExecCmd -Arguments @($TerraformPath, 'state show', $item)
+        & $TerraformPath state show $item | Tee-Object -Variable TfStateList
         $global:TfStateShowData += $TfStateList
     }
     Write-ExecCmd -Header 'SAVED' -Arguments '-> $TfStateList'
@@ -817,7 +819,7 @@ if ($IsGoogleTokenRequired) {
 #   Write-Host 'File token-google.secret does not exist'
 # }
 
-#Region [ login / state / validate / init / output ]
+#Region [ TfStateList / TfStateShow ]
 
 if ($StateList) {
     Write-ExecCmd -Arguments @($TerraformPath, 'state list')
@@ -826,16 +828,22 @@ if ($StateList) {
 }
 
 if ($StateShow) {
-    Write-ExecCmd -Arguments @($TerraformPath, 'state list')
-    $TfStateList = & $TerraformPath state list
-    $Selection = $TfStateList | Out-GridView -Title 'Select resources to show' -PassThru
+    Invoke-TfStateShow -TerraformPath $TerraformPath
 
-    foreach ($item in $Selection) {
-        & $TerraformPath state show ($item -replace '"', '\"') | Tee-Object -Variable TfStateList
-        $env:StateList += $TfStateList
-    }
+    # Write-ExecCmd -Arguments @($TerraformPath, 'state list')
+    # $TfStateList = & $TerraformPath state list
+    # $Selection = $TfStateList | Out-GridView -Title 'Select resources to show' -PassThru
+    
+    # foreach ($item in $Selection) {
+    #     & $TerraformPath state show ($item -replace '"', '\"') | Tee-Object -Variable TfStateList
+    #     $env:StateList += $TfStateList
+    # }
     exit 0
 }
+
+#EndRegion
+
+#Region [ login / validate / init / output ]
 
 if ($Action -eq 'login') {
     Write-ExecCmd -Arguments @($TerraformPath, 'login')
@@ -903,6 +911,8 @@ while ($retries -le 1 -and $action -ne 'output') {
     Write-ExecCmd -Arguments @($TerraformPath, $TfArgs) -NewLineAfter
     & $TerraformPath $TfArgs 2>&1 | Tee-Object -Variable ProcessOutput
 
+    $script:TfRunUrl = $ProcessOutput -match '^https://.*/runs/run-'
+
     if ($LASTEXITCODE -eq 0) {
         Write-Verbose "Terraform ${Action} success."
         break
@@ -967,4 +977,9 @@ while ($retries -le 1 -and $action -ne 'output') {
 
 if ($Action -in @('apply', 'destroy', 'output')) {
     Invoke-TerraformOutput -TerraformPath $TerraformPath -Save -Obj
+}
+
+if ($script:TfRunUrl) {
+    Write-ExecCmd -Header 'RUNID' -Arguments "-> $script:TfRunUrl"
+    $global:TfRunUrl = $script:TfRunUrl
 }
