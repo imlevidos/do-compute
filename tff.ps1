@@ -3,7 +3,7 @@
 #>
 
 param(
-    [ValidateSet('apply', 'plan', 'destroy', 'init', 'state', 'import', 'login', 'version', 'output')][string]$Action = 'apply',
+    [ValidateSet('apply', 'plan', 'destroy', 'init', 'state', 'import', 'login', 'version', 'output', 'validate')][string]$Action = 'apply',
     [switch]${Auto-Approve},
     [switch]$ShutDown,
     [string[]]$TfArgs,
@@ -501,7 +501,7 @@ function Invoke-TerraformInit {
             $TfCmd += '-reconfigure'
         }
 
-        Write-ExecCmd -Arguments $TfCmd
+        Write-ExecCmd -Arguments $TfCmd -NewLineBefore
         Invoke-Expression "& $TfCmd" | Write-Host
     }
 
@@ -579,6 +579,61 @@ function Invoke-TerraformValidate {
     }
 }
 
+function Invoke-TerraformOutput {
+    param(
+        [Parameter(Mandatory = $true)][string]$TerraformPath,
+        [Parameter(Mandatory = $false)][string[]]$TfArgs,
+        [switch]$Save,
+        [switch]$Obj
+    )
+    
+    if ($TfArgs) {
+        Write-ExecCmd -Arguments @($TerraformPath, 'output', $TfArgs -join ' ')
+        & $TerraformPath output $TfArgs
+        Return
+    }
+    
+    $Messages = @()
+    Write-ExecCmd -Arguments @($TerraformPath, 'output')
+
+    if ($Save) {
+        & $TerraformPath output > tf-output.txt
+        $Messages += { Write-ExecCmd -Header 'SAVED' -Arguments '-> tf-output.txt' } # -HeaderColor DarkGray -ArgumentsColor DarkGray
+        if (Test-Path '.gitignore') {
+            $gitignore = Get-Content '.gitignore'
+            if ($gitignore -notlike 'tf-output.txt') {
+                Add-Content '.gitignore' 'tf-output.txt'
+            }
+            if ($gitignore -notlike 'tfplans') {
+                Add-Content '.gitignore' 'tfplans'
+            }
+        }
+    }
+
+    if ($Obj) {
+        $TfOutputJson = & $TerraformPath output -json
+        $TfOutputObj = $TfOutputJson | ConvertFrom-Json -ErrorAction Stop
+        $global:TfOutput = [System.Collections.Specialized.OrderedDictionary]::new()
+        $TfOutputObj.PSObject.Properties | Sort-Object -Property Name | ForEach-Object { 
+            $TfOutput[$_.Name] = $_.Value.value 
+        }
+        $global:TfOutputJson = $TfOutput | ConvertTo-Json -Depth 100
+    
+        $Messages += { Write-ExecCmd -Header 'SAVED' -Arguments '-> $TfOutput $TfOutputJson' }
+        if (Get-Command yq) {
+            $global:TfOutputJson | yq e -PC -
+        }
+        else {
+            $TfOutput | Format-Table             
+        }
+    }
+
+    if ($Messages) {
+        Write-Host
+        $Messages | ForEach-Object { & $_ }
+    }
+}
+
 function Remove-StateLock {
     param(
         # Mandatory
@@ -619,6 +674,8 @@ function Write-ExecCmd {
         [string]$Header = 'EXEC',
         [switch]$SaveToHistory,
         [switch]$SepateLine,
+        [switch]$NewLineBefore,
+        [switch]$NewLineAfter,
         [string]$HeaderColor = 'Green',
         [string]$ArgumentsColor = 'White'
     )
@@ -630,7 +687,7 @@ function Write-ExecCmd {
         }
     }
 
-    if (!$PSBoundParameters.ContainsKey('SepateLine')) {
+    if (!($PSBoundParameters.ContainsKey('SepateLine') -or $PSBoundParameters.ContainsKey('NewLineBefore') -or $PSBoundParameters.ContainsKey('NewLineAfter'))) {
         # Switch wasn't used, determining defaults
         if ($Header -eq 'EXEC') {
             $SepateLine = $true
@@ -640,35 +697,23 @@ function Write-ExecCmd {
     $Header = $Header.PadRight(5, ' ') + ': '
     $Arguments = $Arguments -join ' '
 
-    if ($SepateLine) {
+    if ($SepateLine -or $NewLineBefore) {
         Write-Host
     }
 
     Write-Host $Header -NoNewline -ForegroundColor $HeaderColor
     Write-Host "$Arguments" -ForegroundColor $ArgumentsColor
 
-    if ($SepateLine) {
+    if ($SepateLine -or $NewLineAfter) {
         Write-Host
     }
 
     if ($SaveToHistory) {
         [Microsoft.PowerShell.PSConsoleReadLine]::AddToHistory($Arguments)
+        if ($script:ScriptCommand) {
+            [Microsoft.PowerShell.PSConsoleReadLine]::AddToHistory($script:ScriptCommand)
+        }
     }
-}
-
-function Stop-Script {
-    param(
-        [int]$ExitCode = 0
-    )
-        
-    $LastHistory = [Microsoft.PowerShell.PSConsoleReadLine]::GetHistoryItems() | select -Last 1 -ExpandProperty CommandLine
-    Write-Verbose "Last command: $LastHistory"
-    Write-Verbose "Last check: $script:ScriptCommand"
-    if ($script:ScriptCommand -and $LastHistory -ne $script:ScriptCommand) {
-        [Microsoft.PowerShell.PSConsoleReadLine]::AddToHistory($script:ScriptCommand)
-    }
-
-    exit $ExitCode
 }
 
 $isDotSourced = $MyInvocation.InvocationName -eq '.' -or $MyInvocation.Line -eq ''
@@ -676,13 +721,12 @@ if ($isDotSourced) {
     Write-Output 'INFO: Dot-sourcing functions complete.'
     Return
 }
+$script:InitCompleted = $false
+$script:ScriptCommand = $MyInvocation.Line
 
 ###
 ###   [ START ]
 ###
-
-$script:InitCompleted = $false
-$script:ScriptCommand = $MyInvocation.Line
 
 Write-Verbose 'Checking for terraform files..'
 $files = Get-ChildItem -Path *.tf -File -ErrorAction SilentlyContinue
@@ -698,12 +742,14 @@ if ($env:TF_ENV_PS_DIR) {
 $IsGoogleTokenRequired = Get-IsGoogleTokenRequired
 $BackendType = Get-TerraformBackendType
 
+#Region Detect Terraform Version and Download
+
 if (!$TerraformPath) {
     $Version = $TerraformVersion
     if (!$Version) {
         # Detect Terraform Version
         $Version = Get-TerraformVersion -BackendType $BackendType
-        Write-Host "Detected Terraform Version: $Version"
+        Write-ExecCmd -Header 'INFO' -Arguments "Detected Terraform Version: $Version"
     }
 
     # Download Terraform or use cached version
@@ -721,13 +767,17 @@ if (!$TerraformPath) {
 }
 
 Get-Command $TerraformPath -ErrorAction Stop | Out-Null
-$env:TF = $TerraformPath   
+$env:TF = $TerraformPath
+
+#EndRegion
 
 if ($Action -eq 'version') {
     Write-ExecCmd -Arguments @($TerraformPath, 'version') -SepateLine:$false
     & $TerraformPath version
-    Stop-Script
+    exit 0
 }
+
+#Region GOOGLE_ACCESS_TOKEN
 
 if ($IsGoogleTokenRequired) {
     $env:TF_VAR_GOOGLE_ACCESS_TOKEN = "$(gcloud auth print-access-token)"
@@ -735,6 +785,8 @@ if ($IsGoogleTokenRequired) {
     Write-ExecCmd -Header 'FETCH' -Arguments 'GOOGLE_ACCESS_TOKEN'
     Invoke-TerraformInit -TerraformPath $TerraformPath -BackendType $BackendType -TfInitArgs $TfInitArgs
 }
+
+#EndRegion
 
 # Check the validity of the token if the file exists.
 # No longer needed because we're doing auth at each run, but useful code to keep around.
@@ -765,10 +817,12 @@ if ($IsGoogleTokenRequired) {
 #   Write-Host 'File token-google.secret does not exist'
 # }
 
+#Region [ login / state / validate / init / output ]
+
 if ($StateList) {
     Write-ExecCmd -Arguments @($TerraformPath, 'state list')
     & $TerraformPath state list
-    Stop-Script
+    exit 0
 }
 
 if ($StateShow) {
@@ -780,7 +834,7 @@ if ($StateShow) {
         & $TerraformPath state show ($item -replace '"', '\"') | Tee-Object -Variable TfStateList
         $env:StateList += $TfStateList
     }
-    Stop-Script
+    exit 0
 }
 
 if ($Action -eq 'login') {
@@ -791,6 +845,9 @@ if ($Action -eq 'login') {
 
 if ($Action -in @('validate', 'plan', 'apply', 'destroy')) {
     Invoke-TerraformValidate -TerraformPath $TerraformPath -BackendType $BackendType -TfInitArgs $TfInitArgs
+    if ($Action -eq 'validate') {
+        exit 0
+    }
 }
 
 if ($Action -eq 'init') {
@@ -798,9 +855,14 @@ if ($Action -eq 'init') {
     exit 0
 }
 
-###
-###  Plan/Apply prep
-### 
+if ($Action -eq 'output' -and $TfArgs) {
+    Invoke-TerraformOutput -TerraformPath $TerraformPath -TfArgs $TfArgs
+    exit 0
+}
+
+#EndRegion
+
+#Region [ plan/apply prep ]
 
 $TfArgs = @($Action) + $TfArgs
 
@@ -817,16 +879,16 @@ if ($VarFile) {
     $TfArgs += "-var-file=$VarFile"
 }
 
-###
-###  Terraform Apply/Plan/Destroy
-###
+#EndRegion
+
+#Region [ apply / plan / destroy ]
 
 Write-Information "Starting Terraform ${Action}..`n"
 
 $retries = 0
 $lastError = ''
 
-while ($retries -le 1) {
+while ($retries -le 1 -and $action -ne 'output') {
     $retries++;
 
     # switch ($lastError) {
@@ -838,7 +900,7 @@ while ($retries -le 1) {
     # $env:TF_VAR_GOOGLE_ACCESS_TOKEN = $(Get-Content .\token-google.secret)
 
     # Terraform Apply/Plan/Destroy
-    Write-ExecCmd -Arguments @($TerraformPath, $TfArgs)
+    Write-ExecCmd -Arguments @($TerraformPath, $TfArgs) -NewLineAfter
     & $TerraformPath $TfArgs 2>&1 | Tee-Object -Variable ProcessOutput
 
     if ($LASTEXITCODE -eq 0) {
@@ -901,19 +963,8 @@ while ($retries -le 1) {
     exit $LASTEXITCODE
 }
 
-if ($Action -in @('apply', 'destroy', 'output')) {
-    & $TerraformPath output > tf-output.txt
-    # Write-Host "`nUpdated tf-output.txt" -ForegroundColor DarkGray
-    Write-ExecCmd -Header 'SAVED' -Arguments 'tf-output.txt' -HeaderColor DarkGray -ArgumentsColor DarkGray
-    if (Test-Path '.gitignore') {
-        $gitignore = Get-Content '.gitignore'
-        if ($gitignore -notlike 'tf-output.txt') {
-            Add-Content '.gitignore' 'tf-output.txt'
-        }
-        if ($gitignore -notlike 'tfplans') {
-            Add-Content '.gitignore' 'tfplans'
-        }
-    }
-}
+#EndRegion
 
-Stop-Script
+if ($Action -in @('apply', 'destroy', 'output')) {
+    Invoke-TerraformOutput -TerraformPath $TerraformPath -Save -Obj
+}
