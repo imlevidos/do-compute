@@ -21,6 +21,23 @@ Write-Verbose 'Verbose ON'
 Write-Debug 'Debug ON'
 Write-Information 'Information ON'
 
+function Get-GoogleTokenTTL {
+    param(
+        [string]$Token
+    )
+
+    try {
+        $TokenInfo = Invoke-RestMethod -Uri "https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=$Token" -ErrorAction Stop
+        $ExpiresIn = $TokenInfo.expires_in
+        Write-Verbose "Google Token Info: $TokenInfo"
+    }
+    catch {
+        Write-Verbose "Google Token Info REST call failed: $($_.Exception.Message)"
+        $ExpiresIn = -5939
+    }
+    return $ExpiresIn
+}
+
 function Get-TerraformVersion {
     <#
     .SYNOPSIS
@@ -782,10 +799,19 @@ if ($Action -eq 'version') {
 #Region GOOGLE_ACCESS_TOKEN
 
 if ($IsGoogleTokenRequired) {
-    $env:TF_VAR_GOOGLE_ACCESS_TOKEN = "$(gcloud auth print-access-token)"
-    $env:GOOGLE_ACCESS_TOKEN = $env:TF_VAR_GOOGLE_ACCESS_TOKEN
-    Write-ExecCmd -Header 'FETCH' -Arguments 'GOOGLE_ACCESS_TOKEN'
-    Invoke-TerraformInit -TerraformPath $TerraformPath -BackendType $BackendType -TfInitArgs $TfInitArgs
+    $TokenTTL = 0
+
+    if ($env:GOOGLE_ACCESS_TOKEN) {
+        $TokenTTL = Get-GoogleTokenTTL -Token $env:GOOGLE_ACCESS_TOKEN
+        Write-Debug "Google Token valid for $([math]::Round($TokenTTL / 60))m $([math]::Round($TokenTTL % 60))s"
+    }
+
+    if ($TokenTTL -lt 20 * 60) {
+        $env:TF_VAR_GOOGLE_ACCESS_TOKEN = "$(gcloud auth print-access-token)"
+        $env:GOOGLE_ACCESS_TOKEN = $env:TF_VAR_GOOGLE_ACCESS_TOKEN
+        Write-ExecCmd -Header 'FETCH' -Arguments 'GOOGLE_ACCESS_TOKEN'
+        Invoke-TerraformInit -TerraformPath $TerraformPath -BackendType $BackendType -TfInitArgs $TfInitArgs
+    }
 }
 
 #EndRegion
