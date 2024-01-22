@@ -10,8 +10,8 @@ param(
     [string]$VarFile,
     [string[]]$TfInitArgs,
     [switch]$StateShow,
-    [switch]$StateList,
     [switch]$StatePull,
+    [switch]$StateList,
     [string]$TerraformPath,
     [string]$TerraformVersion
 )
@@ -763,8 +763,8 @@ function Invoke-TfStateShow {
     foreach ($item in $Selection) {
         $item = $item -replace '"', '\"'
         Write-ExecCmd -Arguments @($TerraformPath, 'state show', $item)
-        & $TerraformPath state show $item | Tee-Object -Variable TfStateList
-        $global:TfStateShowData += $TfStateList
+        & $TerraformPath state show $item | Tee-Object -Variable TfStateShow
+        $global:TfStateShowData += $TfStateShow
     }
     Write-ExecCmd -Header 'SAVED' -Arguments '-> $TfStateList'
     if ($global:TfStateShowData) {
@@ -867,7 +867,7 @@ if (!$TerraformPath) {
     }
     $TerraformPath = Split-Path $TerraformPath -Leaf
     Write-ExecCmd -Header 'ALIAS' -Arguments "$TerraformPath -> tfv"
-    Set-Alias -Name tfv -Value $TerraformPath
+    Set-Alias -Name tfv -Value $TerraformPath -Scope Global
 }
 
 Get-Command $TerraformPath -ErrorAction Stop | Out-Null
@@ -934,7 +934,9 @@ if ($IsGoogleTokenRequired) {
 
 if ($StateList) {
     Write-ExecCmd -Arguments @($TerraformPath, 'state list')
-    & $TerraformPath state list
+    & $TerraformPath state list | Tee-Object -Variable TfStateList
+    $global:TfStateList = $TfStateList
+    Write-ExecCmd -Header 'SAVED' -Arguments '-> $TfStateList'
     exit 0
 }
 
