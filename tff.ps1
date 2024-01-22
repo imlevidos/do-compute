@@ -38,6 +38,72 @@ function Get-GoogleTokenTTL {
     return $ExpiresIn
 }
 
+function Get-GitlabToken {
+    # Attempt 1: env var
+    if ($env:GITLAB_TOKEN) {
+        return $env:GITLAB_TOKEN
+    }
+
+    if (Test-Path -Path './.gitlab-token') {
+        $Token = Get-Content -Path './token-gitlab.secret'
+        return $Token
+    }
+}
+
+function Get-GitlabProjectVars {
+    param(
+        [string]$Token
+    )
+
+    $remote = git remote get-url origin
+    $remote = $remote -replace '.*:', ''
+    $remote = $remote -replace '\.git$', ''
+    $remote = $remote -replace '/', '%2F'
+
+    $Headers = @{
+        'PRIVATE-TOKEN' = $Token
+    }
+
+    $Project = Invoke-RestMethod -Uri "https://gitlab.com/api/v4/projects/$remote" -Headers $Headers -ErrorAction Stop
+
+    $ProjectId = $Project.id
+    $ParentId = $Project.namespace.id
+    $GrandParentId = $Project.namespace.parent_id
+    
+    $Variables = @()
+    $Variables += Invoke-RestMethod -Uri "https://gitlab.com/api/v4/projects/$ProjectId/variables" -Headers $Headers -ErrorAction Stop
+
+    if ($ParentId) {
+        $Variables += Invoke-RestMethod -Uri "https://gitlab.com/api/v4/groups/$ParentId/variables" -Headers $Headers -ErrorAction Stop
+    }
+    if ($GrandParentId) {
+        $Variables += Invoke-RestMethod -Uri "https://gitlab.com/api/v4/groups/$GrandParentId/variables" -Headers $Headers -ErrorAction Stop
+    }
+
+    $variableNames = [System.Collections.Specialized.OrderedDictionary]::new()
+    $variableNames['TF_CLOUD_ORGANIZATION'] = 'Organization'
+    $variableNames['TF_WORKSPACE'] = 'Workspace'
+
+    $result = @{}
+
+    $Message = ''
+    foreach ($var in $variableNames.GetEnumerator()) {
+        if ($var.key -in $variables.Key) {
+            $Value = $variables | Where-Object { $_.Key -eq $var.Key } | Select-Object -ExpandProperty Value
+            Write-Debug "Found Gitlab var: $($var.key) = $Value"
+            $result[$variableNames[$var.key]] = $Value
+            Invoke-Expression "`$env:$($var.key)=`"$Value`""
+            $Message += "$($var.key): $Value  "
+        }
+    }
+
+    if ($result) {
+        Write-ExecCmd -Header 'TFENV' -Arguments $Message
+    }
+
+    return $result
+}
+
 function Get-TerraformVersion {
     <#
     .SYNOPSIS
@@ -121,7 +187,8 @@ function Get-TerraformInitDetails {
 }
 
 function Get-TerraformVersionRemote {
-    $Token = Get-TfeToken
+    $TfeToken = Get-TfeToken
+    $GitlabToken = Get-GitlabToken
 
     $RepoConfigFile = './.terraform/terraform.tfstate'
     if (!(Test-Path $RepoConfigFile)) {
@@ -145,17 +212,34 @@ function Get-TerraformVersionRemote {
             $Server = 'app.terraform.io'
         }
         $Organization = $Config.backend.config.organization
-        $Workspace = $Config.backend.config.workspaces[0].name
+        $Workspace = $null
+        if ($Config.backend.config.workspaces) {
+            $Workspace = $Config.backend.config.workspaces[0].name
+        }
     }
+
+    if (!$Organization -or !$Workspace) {
+        $GitlabVars = Get-GitlabProjectVars -Token $GitlabToken
+        $GitlabVars.GetEnumerator() | ForEach-Object {
+            Set-Variable -Name $_.Key -Value $_.Value -Force
+        }
+    }
+
+    Write-Verbose "Server: $Server`tOrganization: $Organization`tWorkspace: $Workspace"
 
     $Params = @{
         'Server'       = $Server
         'Organization' = $Organization
         'Workspace'    = $Workspace
-        'Token'        = $Token
+        'Token'        = $TfeToken
     }
 
-    $WorkspaceData = Get-TfeWorkspace @Params
+    try {
+        $WorkspaceData = Get-TfeWorkspace @Params
+    }
+    catch {
+        Throw "Error getting workspace details: $($_.Exception.Message)"
+    }
     $Result = $WorkspaceData.attributes.'terraform-version'
     Write-Verbose "TFE Workspace Attributes: $($WorkspaceData.attributes)"
     Write-Debug "Detected Terraform version from remote: $Result"
