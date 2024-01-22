@@ -3,14 +3,15 @@
 #>
 
 param(
-    [ValidateSet('apply', 'plan', 'destroy', 'init', 'state', 'import', 'login', 'version', 'output', 'validate')][string]$Action = 'apply',
+    [ValidateSet('apply', 'plan', 'destroy', 'init', 'state', 'import', 'login', 'version', 'output', 'validate', 'taint')][string]$Action = 'apply',
+    [string[]]$TfArgs,
     [switch]${Auto-Approve},
     [switch]$ShutDown,
-    [string[]]$TfArgs,
     [string]$VarFile,
     [string[]]$TfInitArgs,
-    [switch]$StateList,
     [switch]$StateShow,
+    [switch]$StateList,
+    [switch]$StatePull,
     [string]$TerraformPath,
     [string]$TerraformVersion
 )
@@ -951,6 +952,34 @@ if ($StateShow) {
     exit 0
 }
 
+if ($StatePull) {
+    Write-ExecCmd -Arguments @($TerraformPath, 'state pull') -SepateLine:$false
+
+    $DownloadDir = "$env:USERPROFILE\Downloads"
+    $TempFile = Get-Location | Split-Path -Leaf
+    $Suffix = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $TempState = "$DownloadDir\$TempFile-$Suffix.tfstate.json"
+    $TempStateYaml = "$DownloadDir\$TempFile-$Suffix.tfstate.yaml"
+    & $TerraformPath state pull | Set-Content $TempState
+    if (Get-Command yq -ErrorAction SilentlyContinue) {
+        Write-ExecCmd -Arguments @('yq', '-P', $TempState, '>', $TempStateYaml) -SepateLine:$false
+        yq -Poy $TempState >  $TempStateYaml
+        $TempState = $TempStateYaml
+    }
+
+    if (Get-Command code -ErrorAction SilentlyContinue) {
+        code $TempState
+    }
+    elseif (Get-Command notepad++ -ErrorAction SilentlyContinue) {
+        notepad++ $TempState
+    }
+    else {
+        notepad $TempState
+    }
+
+    exit 0
+}
+
 #EndRegion
 
 #Region [ login / validate / init / output ]
@@ -958,6 +987,12 @@ if ($StateShow) {
 if ($Action -eq 'login') {
     Write-ExecCmd -Arguments @($TerraformPath, 'login')
     & $TerraformPath login
+    exit 0
+}
+
+if ($Action -eq 'taint') {
+    Write-ExecCmd -Arguments @($TerraformPath, 'taint', ($TfArgs -join ' '))
+    & $TerraformPath taint $TfArgs
     exit 0
 }
 
