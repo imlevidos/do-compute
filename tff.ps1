@@ -3,7 +3,7 @@
 #>
 
 param(
-    [ValidateSet('apply', 'plan', 'destroy', 'init', 'state', 'import', 'login', 'version', 'output', 'validate', 'taint')][string]$Action = 'apply',
+    [ValidateSet('apply', 'plan', 'destroy', 'init', 'state', 'import', 'login', 'version', 'output', 'validate', 'taint', 'fmt')][string]$Action = 'apply',
     [string[]]$TfArgs,
     [switch]${Auto-Approve},
     [switch]$ShutDown,
@@ -992,9 +992,10 @@ if ($Action -eq 'login') {
     exit 0
 }
 
-if ($Action -eq 'taint') {
-    Write-ExecCmd -Arguments @($TerraformPath, 'taint', ($TfArgs -join ' '))
-    & $TerraformPath taint $TfArgs
+if ($Action -in @('taint', 'login', 'fmt')) {
+    $TfArgs = @($Action) + $TfArgs
+    Write-ExecCmd -Arguments @($TerraformPath, ($TfArgs -join ' '))
+    & $TerraformPath $TfArgs
     exit 0
 }
 
