@@ -2,6 +2,7 @@
 .VERSION 2024.01.21
 #>
 
+[CmdletBinding()]
 param(
     [ValidateSet('apply', 'plan', 'destroy', 'init', 'state', 'import', 'login', 'version', 'output', 'validate', 'taint', 'fmt')][string]$Action = 'apply',
     [string[]]$TfArgs,
@@ -16,7 +17,11 @@ param(
     [string]$TerraformVersion
 )
 
-$InformationPreference = 'SilentlyContinue'
+$script:InformationPreference = 'SilentlyContinue'
+
+if ($PSBoundParameters.ContainsKey('Debug')) {
+    $Script:DebugPreference = 'Continue'
+}
 
 Write-Verbose 'Verbose ON'
 Write-Debug 'Debug ON'
