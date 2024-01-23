@@ -703,11 +703,13 @@ function Invoke-TerraformOutput {
         $Messages += { Write-ExecCmd -Header 'SAVED' -Arguments '-> tf-output.txt' } # -HeaderColor DarkGray -ArgumentsColor DarkGray
         if (Test-Path '.gitignore') {
             $gitignore = Get-Content '.gitignore'
-            if (-not $gitignore -like 'tf-output.txt') {
+            if (!($gitignore -like 'tf-output.txt')) {
                 Add-Content '.gitignore' 'tf-output.txt'
+                Write-Verbose 'Patched: tf-output.txt >> .gitignore'
             }
-            if (-not $gitignore -like 'tfplans') {
+            if (!($gitignore -like 'tfplans')) {
                 Add-Content '.gitignore' 'tfplans'
+                Write-Verbose 'Patched: tfplans >> .gitignore'
             }
         }
     }
@@ -863,10 +865,10 @@ if (!$TerraformPath) {
         if ($env:PATH[-1] -ne ';') {
             $env:PATH += ';'
         }
-        $env:PATH += "${ExeDir};"
+        $env:PATH += "${ExeDir}; "
     }
     $TerraformPath = Split-Path $TerraformPath -Leaf
-    Write-ExecCmd -Header 'ALIAS' -Arguments "$TerraformPath -> tfv"
+    Write-ExecCmd -Header 'ALIAS' -Arguments "$TerraformPath - > tfv"
     Set-Alias -Name tfv -Value $TerraformPath -Scope Global
 }
 
