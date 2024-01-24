@@ -1,5 +1,5 @@
 ﻿<#
-.VERSION 2024.01.21
+.VERSION 2024.01.24
 #>
 
 [CmdletBinding()]
@@ -988,6 +988,7 @@ if ($StatePull) {
 
     exit 0
 }
+# Accept the shorthand syntax: tff init "-upgrade"
 
 #EndRegion
 
@@ -1014,6 +1015,11 @@ if ($Action -in @('validate', 'plan', 'apply', 'destroy')) {
 }
 
 if ($Action -eq 'init') {
+    # Accept the shorthand syntax: tff init "-upgrade"
+    if (!($TfInitArgs) -and $TfArgs) {
+        $TfInitArgs = $TfArgs
+    }
+
     Invoke-TerraformInit -TerraformPath $TerraformPath -BackendType $BackendType -TfInitArgs $TfInitArgs
     exit 0
 }
