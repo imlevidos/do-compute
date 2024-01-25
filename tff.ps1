@@ -1,5 +1,5 @@
 ﻿<#
-.VERSION 2024.01.24
+.VERSION 2024.01.25
 #>
 
 [CmdletBinding()]
@@ -233,6 +233,14 @@ function Get-TerraformVersionRemote {
 
     Write-Verbose "Server: $Server`tOrganization: $Organization`tWorkspace: $Workspace"
 
+    $global:TFERemoteDetails = @{
+        "server"       = $Server
+        "organization" = $Organization
+        "workspace"    = $Workspace
+    }
+    # Mute the editor warning
+    $TFERemoteDetails | Out-Null
+
     $Params = @{
         'Server'       = $Server
         'Organization' = $Organization
@@ -246,10 +254,10 @@ function Get-TerraformVersionRemote {
     catch {
         Throw "Error getting workspace details: $($_.Exception.Message)"
     }
-    $Result = $WorkspaceData.attributes.'terraform-version'
+    $TerraformVersion = $WorkspaceData.attributes.'terraform-version'
     Write-Verbose "TFE Workspace Attributes: $($WorkspaceData.attributes)"
-    Write-Debug "Detected Terraform version from remote: $Result"
-    return $Result
+    Write-Debug "Detected Terraform version from remote: $TerraformVersion"
+    return $TerraformVersion
 }
 
 function Get-TerraformVersionText {
@@ -431,7 +439,7 @@ function Get-TfContent {
 }
 
 function Get-TerraformRemoteDetailsFromCode {
-    $Content = Get-Content -Raw *.tf 
+    $Content = Get-Content -Raw * .tf 
     $Search = $Content | Select-String -Pattern 'terraform\s*{[\s\n]*backend\s*\"[a-z]+\"\s*{[\s\n]*hostname\s*=\s*\"(.*)\"[\s\n]*organization\s*=\s*\"(.*)\"[\s\n]*workspaces\s*{[\s\n]*(?:#.*\n)\s*name\s*=\s*\"(.*)\"'
 
     if ($null -eq $Search) {
@@ -840,7 +848,7 @@ $script:ScriptCommand = $MyInvocation.Line
 ###
 
 Write-Verbose 'Checking for terraform files..'
-$files = Get-ChildItem -Path *.tf -File -ErrorAction SilentlyContinue
+$files = Get-ChildItem -Path '*.tf' -File -ErrorAction SilentlyContinue
 if ($null -eq $files) {
     Throw 'No terraform files found.'
 }
@@ -867,7 +875,7 @@ if (!$TerraformPath) {
     $TerraformPath = Invoke-TerraformDownload -Version $Version -OutDir $env:TF_ENV_PS_DIR
     $ExeDir = Split-Path $TerraformPath
     if ($env:PATH -notlike "*${ExeDir}*") {
-        if ($env:PATH[-1] -ne ';') {
+        if ($env:PATH[ - 1] -ne ';') {
             $env:PATH += ';'
         }
         $env:PATH += "${ExeDir}; "
@@ -971,13 +979,22 @@ if ($StatePull) {
     $TempStateYaml = "$DownloadDir\$TempFile-$Suffix.tfstate.yaml"
     & $TerraformPath state pull | Set-Content $TempState
     if (Get-Command yq -ErrorAction SilentlyContinue) {
-        Write-ExecCmd -Arguments @('yq', '-P', $TempState, '>', $TempStateYaml) -SepateLine:$false
-        yq -Poy $TempState >  $TempStateYaml
+        Write-ExecCmd -Arguments @('yq', '-P', $TempState, '>', $TempStateYaml) -SepateLine:$false -SaveToHistory:$false
+        $Content = @()
+        $Content += "__metadata:"
+        $Content += "  generated: $(Get-Date -format "yyyy/MM/dd-HH:mm:ss")"
+        foreach ($k in $TFERemoteDetails.keys) {
+            $Content += "  ${k}: $($TFERemoteDetails[$k])"
+        }
+        $Content += "  localPath: $(Get-Location)"
+        Set-Content -Path $TempStateYaml -Value $Content
+        yq -Poy $TempState | Add-Content $TempStateYaml
+        Remove-Item -Force $TempState
         $TempState = $TempStateYaml
     }
 
     if (Get-Command code -ErrorAction SilentlyContinue) {
-        code $TempState
+        code -n $TempState
     }
     elseif (Get-Command notepad++ -ErrorAction SilentlyContinue) {
         notepad++ $TempState
@@ -985,6 +1002,8 @@ if ($StatePull) {
     else {
         notepad $TempState
     }
+    Start-Sleep -Milliseconds 500
+    # Remove-Item $TempState
 
     exit 0
 }
