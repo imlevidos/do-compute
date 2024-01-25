@@ -17,6 +17,12 @@ param(
     [string]$TerraformVersion
 )
 
+<#
+
+.PARAM Force
+    Don't exit if there are no Terrform files
+#>
+
 $script:InformationPreference = 'SilentlyContinue'
 
 if ($PSBoundParameters.ContainsKey('Debug')) {
@@ -287,11 +293,13 @@ function Get-TerraformVersionText {
 }
 
 function Get-TerraformBackendType {
-    $Content = Get-TfContent -Raw
-    if ($null -eq $Content) {
-        Write-Debug 'Get-TerraformBackendType: no Terraform files found'
-        return $null
+    try {
+        $Content = Get-TfContent -Raw -ErrorAction Stop
     }
+    catch {
+        Throw "Unable to detect Terraform backend, no *.tf files found."
+    }
+
     $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*backend\s*\"([a-z]+)\"'
     if ($Null -eq $Search.Matches) {
         # Second attempt, look for `cloud` syntax
@@ -369,6 +377,7 @@ function Get-TfContent {
         2024.01.20
     #>
     
+    [CmdletBinding()]
     param(
         [string]$Path = './*.tf',
         [switch]$Raw
@@ -576,7 +585,7 @@ function Invoke-TerraformDownload {
 }
 
 function Get-IsGoogleTokenRequired {
-    $Content = Get-TfContent -Raw
+    $Content = Get-TfContent -Raw -ErrorAction SilentlyContinue
     $Search = $Content | Select-String -Pattern 'variable\s*"GOOGLE_ACCESS_TOKEN"\s*{'
     $IsGoogleTokenRequired = $Null -ne $Search.Matches
     if ($IsGoogleTokenRequired) {
@@ -847,32 +856,24 @@ $script:ScriptCommand = $MyInvocation.Line
 ###   [ START ]
 ###
 
-Write-Verbose 'Checking for terraform files..'
-$files = Get-ChildItem -Path '*.tf' -File -ErrorAction SilentlyContinue
-if ($null -eq $files) {
-    Throw 'No terraform files found.'
-}
-
 $InvokeTfDlParams = @{}
 if ($env:TF_ENV_PS_DIR) {
     $InvokeTfDlParams['OutDir'] = $env:TF_ENV_PS_DIR
 }
 
-$IsGoogleTokenRequired = Get-IsGoogleTokenRequired
-$BackendType = Get-TerraformBackendType
 
-#Region Detect Terraform Version and Download
+#Region Detect Terraform Version and Download it
 
 if (!$TerraformPath) {
-    $Version = $TerraformVersion
-    if (!$Version) {
+    if (!$TerraformVersion) {
         # Detect Terraform Version
-        $Version = Get-TerraformVersion -BackendType $BackendType
+        $BackendType = Get-TerraformBackendType
+        $TerraformVersion = Get-TerraformVersion -BackendType $BackendType
         Write-ExecCmd -Header 'INFO' -Arguments "Detected Terraform Version: $Version"
     }
 
     # Download Terraform or use cached version
-    $TerraformPath = Invoke-TerraformDownload -Version $Version -OutDir $env:TF_ENV_PS_DIR
+    $TerraformPath = Invoke-TerraformDownload -Version $TerraformVersion -OutDir $env:TF_ENV_PS_DIR
     $ExeDir = Split-Path $TerraformPath
     if ($env:PATH -notlike "*${ExeDir}*") {
         if ($env:PATH[ - 1] -ne ';') {
@@ -897,6 +898,8 @@ if ($Action -eq 'version') {
 }
 
 #Region GOOGLE_ACCESS_TOKEN
+
+$IsGoogleTokenRequired = Get-IsGoogleTokenRequired
 
 if ($IsGoogleTokenRequired) {
     $TokenTTL = 0
