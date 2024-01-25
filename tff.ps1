@@ -64,48 +64,67 @@ function Get-GitlabToken {
 
 function Get-GitlabProjectVars {
     param(
-        [string]$Token
+        [string]$Token,
+        [string]$Environment
     )
 
     $remote = git remote get-url origin
+    # Remove protocol and domain
+    $remote = $remote -replace 'https://[^/]*/', ''
+    # Remove git refix when protocol is ssh
     $remote = $remote -replace '.*:', ''
+    # Remove .git suffix
     $remote = $remote -replace '\.git$', ''
+    # Replace / with %2F
     $remote = $remote -replace '/', '%2F'
 
     $Headers = @{
         'PRIVATE-TOKEN' = $Token
     }
 
-    $Project = Invoke-RestMethod -Uri "https://gitlab.com/api/v4/projects/$remote" -Headers $Headers -ErrorAction Stop
+    $Uri = "https://gitlab.com/api/v4/projects/$remote"
+    try {
+        $Project = Invoke-RestMethod -Uri $Uri -Headers $Headers -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "URL: $Uri"
+        Throw "Error getting project details: $($_.Exception.Message)"
+    }
 
     $ProjectId = $Project.id
     $ParentId = $Project.namespace.id
     $GrandParentId = $Project.namespace.parent_id
     
-    $Variables = @()
-    $Variables += Invoke-RestMethod -Uri "https://gitlab.com/api/v4/projects/$ProjectId/variables" -Headers $Headers -ErrorAction Stop
+    $GitlabVariables = @()
+    $GitlabVariables += Invoke-RestMethod -Uri "https://gitlab.com/api/v4/projects/$ProjectId/variables" -Headers $Headers -ErrorAction Stop
 
     if ($ParentId) {
-        $Variables += Invoke-RestMethod -Uri "https://gitlab.com/api/v4/groups/$ParentId/variables" -Headers $Headers -ErrorAction Stop
+        $GitlabVariables += Invoke-RestMethod -Uri "https://gitlab.com/api/v4/groups/$ParentId/variables" -Headers $Headers -ErrorAction Stop
     }
     if ($GrandParentId) {
-        $Variables += Invoke-RestMethod -Uri "https://gitlab.com/api/v4/groups/$GrandParentId/variables" -Headers $Headers -ErrorAction Stop
+        $GitlabVariables += Invoke-RestMethod -Uri "https://gitlab.com/api/v4/groups/$GrandParentId/variables" -Headers $Headers -ErrorAction Stop
     }
 
-    $variableNames = [System.Collections.Specialized.OrderedDictionary]::new()
-    $variableNames['TF_CLOUD_ORGANIZATION'] = 'Organization'
-    $variableNames['TF_WORKSPACE'] = 'Workspace'
+    $varLookupList = [System.Collections.Specialized.OrderedDictionary]::new()
+    $varLookupList['TF_CLOUD_ORGANIZATION'] = 'Organization'
+    $varLookupList['TF_WORKSPACE'] = 'Workspace'
 
     $result = @{}
 
     $Message = ''
-    foreach ($var in $variableNames.GetEnumerator()) {
-        if ($var.key -in $variables.Key) {
-            $Value = $variables | Where-Object { $_.Key -eq $var.Key } | Select-Object -ExpandProperty Value
-            Write-Debug "Found Gitlab var: $($var.key) = $Value"
-            $result[$variableNames[$var.key]] = $Value
-            Invoke-Expression "`$env:$($var.key)=`"$Value`""
-            $Message += "$($var.key): $Value  "
+    foreach ($varLookup in $varLookupList.GetEnumerator()) {
+        foreach ($GitlabVar in $GitlabVariables | Where-Object { $_.Key -eq $varLookup.Key }) {
+
+            if ($Environment -and $GitlabVar.environment_scope -notin @('*', $Environment)) {
+                Write-Verbose "Skipping Gitlab var because the envs don't match: $($GitlabVar.Key)/$($GitlabVar.environment_scope)"
+                Continue
+            }
+            
+            $Value = $GitlabVar.Value
+            Write-Debug "Found Gitlab var: $($varLookup.key) = $Value"
+            $result[$varLookupList[$varLookup.key]] = $Value
+            Invoke-Expression "`$env:$($varLookup.key)=`"$Value`""
+            $Message += "$($varLookup.key): $Value  "
         }
     }
 
@@ -231,7 +250,14 @@ function Get-TerraformVersionRemote {
     }
 
     if (!$Organization -or !$Workspace) {
-        $GitlabVars = Get-GitlabProjectVars -Token $GitlabToken
+        # Check if we're on an environment specific path
+        $Location = Get-Location
+        $GetGlpvParams = @{}
+        if ($Location -match '[\\/]environments[\\/]([a-z0-9]+)$') {
+            Write-Debug "Detected environment: $($Matches[1])"
+            $GetGlpvParams['Environment'] = $Matches[1]
+        }
+        $GitlabVars = Get-GitlabProjectVars -Token $GitlabToken @GetGlpvParams
         $GitlabVars.GetEnumerator() | ForEach-Object {
             Set-Variable -Name $_.Key -Value $_.Value -Force
         }
@@ -837,9 +863,17 @@ function Write-ExecCmd {
     }
 
     if ($SaveToHistory) {
-        [Microsoft.PowerShell.PSConsoleReadLine]::AddToHistory($Arguments)
+        try {
+            [Microsoft.PowerShell.PSConsoleReadLine]::AddToHistory($Arguments)
+        }
+        catch {
+        }
         if ($script:ScriptCommand) {
-            [Microsoft.PowerShell.PSConsoleReadLine]::AddToHistory($script:ScriptCommand)
+            try {
+                [Microsoft.PowerShell.PSConsoleReadLine]::AddToHistory($script:ScriptCommand)
+            }
+            catch {
+            }
         }
     }
 }
@@ -1057,9 +1091,6 @@ if ($Action -eq 'output' -and $TfArgs) {
 
 $TfArgs = @($Action) + $TfArgs
 
-if ($Action -eq 'plan') {
-    $TfArgs += '-detailed-exitcode'
-}
 if ($ShutDown) {
     $TfArgs += '-var=shutdown=true'
 }
