@@ -132,13 +132,26 @@ function Get-GitlabProjectVars {
     $GitlabVariables += Invoke-RestMethod -Uri "$GitlabAddr/api/v4/projects/$ProjectId/variables" -Headers $Headers -ErrorAction Stop
 
     if ($ParentId) {
-        $GitlabVariables += Invoke-RestMethod -Uri "$GitlabAddr/api/v4/groups/$ParentId/variables" -Headers $Headers -ErrorAction Stop
+        try {
+            $CallUri = "$GitlabAddr/api/v4/groups/$ParentId/variables"
+            $GitlabVariables += Invoke-RestMethod -Uri $CallUri -Headers $Headers
+        }
+        catch {
+            Write-Warning "Cannot query Gitlab parent: $CallUri"
+        }
     }
     if ($GrandParentId) {
-        $GitlabVariables += Invoke-RestMethod -Uri "$GitlabAddr/api/v4/groups/$GrandParentId/variables" -Headers $Headers -ErrorAction Stop
+        try {
+            $CallUri = "$GitlabAddr/api/v4/groups/$GrandParentId/variables"
+            $GitlabVariables += Invoke-RestMethod -Uri $CallUri -Headers $Headers
+        }
+        catch {
+            Write-Warning "Cannot query Gitlab grandparent: $CallUri"
+        }
     }
 
     $varLookupList = [System.Collections.Specialized.OrderedDictionary]::new()
+    $varLookupList['TF_CLOUD_HOSTNAME'] = 'Hostname'
     $varLookupList['TF_CLOUD_ORGANIZATION'] = 'Organization'
     $varLookupList['TF_WORKSPACE'] = 'Workspace'
 
@@ -176,12 +189,13 @@ function Get-TerraformVersion {
         Try to detect the Terraform Version
     #>
     param(
-        [string]$BackendType
+        [string]$BackendType,
+        $TFERemoteDetails = @()
     )
 
     $Version = switch ($BackendType) {
-        'remote' { Get-TerraformVersionRemote; Break }
-        'cloud' { Get-TerraformVersionRemote; Break }
+        'remote' { Get-TerraformVersionRemote -TFERemoteDetails $TFERemoteDetails; Break }
+        'cloud' { Get-TerraformVersionRemote -TFERemoteDetails $TFERemoteDetails; Break }
         'none' { Get-TerraformVersionTfstate; Break }
         # 'none' {}
         Default { Get-TerraformVersionText }
@@ -253,9 +267,13 @@ function Get-TerraformInitDetails {
 }
 
 function Get-TerraformVersionRemote {
-    $TfeToken = Get-TfeToken
-    $GitlabToken = Get-GitlabToken
+    param(
+        $TFERemoteDetails = @()
+    )
 
+    # $GitlabToken = Get-GitlabToken
+
+    <#>
     $RepoConfigFile = './.terraform/terraform.tfstate'
     if (!(Test-Path $RepoConfigFile)) {
         Write-Debug "$RepoConfigFile not found, running terraform init"
@@ -267,15 +285,15 @@ function Get-TerraformVersionRemote {
     if (!(Test-Path $RepoConfigFile)) {
         Write-Verbose 'Terraform Init possibly failed, trying to get remote details from code.'
         $Result = Get-TerraformRemoteDetailsFromCode
-        $Server = $Result.Server
+        $Hostname = $Result.Hostname
         $Organization = $Result.Organization
         $Workspace = $Result.Workspace
     }
     else {
         $Config = Get-Content $RepoConfigFile | ConvertFrom-Json
-        $Server = $Config.backend.config.hostname
-        if (!$Server) {
-            $Server = 'app.terraform.io'
+        $Hostname = $Config.backend.config.hostname
+        if (!$Hostname) {
+            $Hostname = 'app.terraform.io'
         }
         $Organization = $Config.backend.config.organization
         $Workspace = $null
@@ -283,6 +301,8 @@ function Get-TerraformVersionRemote {
             $Workspace = $Config.backend.config.workspaces[0].name
         }
     }
+    
+
 
     if (!$Organization -or !$Workspace) {
         # Check if we're on an environment specific path
@@ -298,18 +318,31 @@ function Get-TerraformVersionRemote {
         }
     }
 
-    Write-Verbose "Server: $Server`tOrganization: $Organization`tWorkspace: $Workspace"
+    Write-Verbose "Hostname: $Hostname`tOrganization: $Organization`tWorkspace: $Workspace"
 
     $global:TFERemoteDetails = @{
-        'server'       = $Server
+        'hostname'       = $Hostname
         'organization' = $Organization
         'workspace'    = $Workspace
     }
     # Mute the editor warning
     $TFERemoteDetails | Out-Null
+    #>
+
+    $Hostname = $TFERemoteDetails.hostname
+    $Organization = $TFERemoteDetails.organization
+    $Workspace = $TFERemoteDetails.workspace
+
+    if (!$Hostname -or !$Organization -or !$Workspace) {
+        Write-Debug "Hostname: $Hostname, Organization: $Organization, Workspace: $Workspace"
+
+        Throw "TFERemoteDetails missing."
+    }
+
+    $TfeToken = Get-TfeToken
 
     $Params = @{
-        'Server'       = $Server
+        'Hostname'     = $Hostname
         'Organization' = $Organization
         'Workspace'    = $Workspace
         'Token'        = $TfeToken
@@ -357,6 +390,10 @@ function Get-TerraformBackendType {
     [CmdletBinding()]
     param()
 
+    if ($script:BackendType) {
+        return $script:BackendType
+    }
+
     try {
         $Content = Get-TfContent -Raw -ErrorAction Stop
     }
@@ -375,22 +412,23 @@ function Get-TerraformBackendType {
         Write-Debug 'Detected backend: None'
         return 'none'
     }
-    $Backend = $Search.Matches[0].Groups[1].Value
-    Write-Debug "Detected backend: $Backend"
-    return $Backend
+    $script:BackendType = $Search.Matches[0].Groups[1].Value
+    Write-Debug "Detected backend: $script:BackendType"
+
+    return $script:BackendType
 }
 
 function Get-TfeToken {
     param(
-        [string]$Server = ''
+        [string]$Hostname = ''
     )
     # Try terraform.rc
     $CliConfigFileRc = "$env:APPDATA/terraform.rc"
     if (Test-Path $CliConfigFileRc) {
-        if (!$Server) {
-            $Server = '.*'
+        if (!$Hostname) {
+            $Hostname = '.*'
         }
-        $Pattern = "credentials\s*`"$Server`"\s*{[\s\n]*token\s*=\s*\`"(.*)`""
+        $Pattern = "credentials\s*`"$Hostname`"\s*{[\s\n]*token\s*=\s*\`"(.*)`""
         $Search = Get-Content -Raw $CliConfigFileRc | Select-String -Pattern $Pattern
         if ($Null -eq $Search.Matches) {
             Throw "Error extracting token from cli config: $CliConfigFileRc"
@@ -401,13 +439,13 @@ function Get-TfeToken {
     # Try credentials.tfrc.json
     $CliConfigFileTfrc = "$env:APPDATA/terraform.d/credentials.tfrc.json"
     if (Test-Path $CliConfigFileTfrc) {
-        if (!$Server) {
-            $Server = 'app.terraform.io'
+        if (!$Hostname) {
+            $Hostname = 'app.terraform.io'
         }
         $Content = Get-Content -Raw $CliConfigFileTfrc | ConvertFrom-Json
-        $Result = $Content.credentials.$Server.token
+        $Result = $Content.credentials.$Hostname.token
         if ($null -eq $Result) {
-            Throw "Cannot find token for $Server in: $CliConfigFileTfrc"
+            Throw "Cannot find token for $Hostname in: $CliConfigFileTfrc"
         }
         return $Result
     }
@@ -416,10 +454,10 @@ function Get-TfeToken {
 
 function Get-TfeWorkspace {
     param(
-        [string]$Server,
-        [string]$Organization,
-        [string]$Workspace,
-        [string]$Token
+        [Parameter(Mandatory = $true)][string]$Hostname,
+        [Parameter(Mandatory = $true)][string]$Organization,
+        [Parameter(Mandatory = $true)][string]$Workspace,
+        [Parameter(Mandatory = $true)][string]$Token
     )
 
     $Headers = @{
@@ -427,7 +465,7 @@ function Get-TfeWorkspace {
         'Content-Type'  = 'application/vnd.api+json'
     }
     
-    $URL = "https://$Server/api/v2/organizations/$Organization/workspaces/$Workspace"
+    $URL = "https://$Hostname/api/v2/organizations/$Organization/workspaces/$Workspace"
     
     $Response = Invoke-RestMethod -Uri $URL -Headers $Headers -ErrorAction Stop
     $Result = $Response.Data
@@ -542,19 +580,19 @@ function Get-TerraformBackendDetailsFromCode {
         $Content -match 'organization\s*=\s*"(.*?)"' | Out-Null
         if ($Matches -and $Matches.Count -eq 2) {
             $TFERemoteDetails['organization'] = $Matches[1]
-            Write-Verbose "Detected Terraform Cloud organization: $($Matches[1])"
+            Write-Verbose "Detected Terraform Cloud organization from code: $($Matches[1])"
         }
 
         $Content -match 'workspaces\s*{\s*name\s*=\s*"(.*?)"' | Out-Null
         if ($Matches -and $Matches.Count -eq 2) {
             $TFERemoteDetails['workspace'] = $Matches[1]
-            Write-Verbose "Detected Terraform Cloud workspace: $($Matches[1])"
+            Write-Verbose "Detected Terraform Cloud workspace from code: $($Matches[1])"
         }
 
         $Content -match 'hostname\s*=\s*"(.*?)"' | Out-Null
         if ($Matches -and $Matches.Count -eq 2) {
-            $TFERemoteDetails['server'] = $Matches[1]
-            Write-Verbose "Detected Terraform Cloud server: $($Matches[1])"
+            $TFERemoteDetails['hostname'] = $Matches[1]
+            Write-Verbose "Detected Terraform Cloud hostname from code: $($Matches[1])"
         }
     }
 
@@ -568,19 +606,19 @@ function Get-TerraformBackendDetailsFromCode {
         $Content -match 'organization\s*=\s*"(.*?)"' | Out-Null
         if ($Matches -and $Matches.Count -eq 2) {
             $TFERemoteDetails['organization'] = $Matches[1]
-            Write-Verbose "Detected Terraform Remote organization: $($Matches[1])"
+            Write-Verbose "Detected Terraform Remote organization from code: $($Matches[1])"
         }
 
         $Content -match 'workspaces\s*{\s*name\s*=\s*"(.*?)"' | Out-Null
         if ($Matches -and $Matches.Count -eq 2) {
             $TFERemoteDetails['workspace'] = $Matches[1]
-            Write-Verbose "Detected Terraform Remote workspace: $($Matches[1])"
+            Write-Verbose "Detected Terraform Remote workspace from code: $($Matches[1])"
         }
 
         $Content -match 'hostname\s*=\s*"(.*?)"' | Out-Null
         if ($Matches -and $Matches.Count -eq 2) {
-            $TFERemoteDetails['server'] = $Matches[1]
-            Write-Verbose "Detected Terraform Remote server: $($Matches[1])"
+            $TFERemoteDetails['hostname'] = $Matches[1]
+            Write-Verbose "Detected Terraform Remote hostname from code: $($Matches[1])"
         }
     }
 
@@ -1034,15 +1072,19 @@ if ($env:TF_ENV_PS_DIR) {
     $InvokeTfDlParams['OutDir'] = $env:TF_ENV_PS_DIR
 }
 
+
 $NeedsBackendInfo = $true
 if ($NeedsBackendInfo) {
     $BackendType = Get-TerraformBackendType
-    if ($BackendType -in @('cloud', 'remote')) {
-        $BackendDetails = Get-TerraformBackendDetailsFromCode -BackendType $BackendType
-    
-        if (!$BackendDetails.server -or !$BackendDetails.organization -or !$BackendDetails.workspace) {
-            $BackendDetails = Get-GitlabProjectVars
+    if (!$script:BackendDetails) {
+        if ($BackendType -in @('cloud', 'remote')) {
+            $script:BackendDetails = Get-TerraformBackendDetailsFromCode -BackendType $BackendType
+        
+            if (!$BackendDetails.hostname -or !$BackendDetails.organization -or !$BackendDetails.workspace) {
+                $script:BackendDetails = Get-GitlabProjectVars
+            }
         }
+
     }
 }
 
@@ -1053,7 +1095,11 @@ if (!$TerraformPath) {
     if (!$TerraformVersion) {
         # Detect Terraform Version
         $BackendType = Get-TerraformBackendType
-        $TerraformVersion = Get-TerraformVersion -BackendType $BackendType
+        $FunctionParam = @()
+        if ($script:BackendDetails) {
+            $FunctionParam = @{'TFERemoteDetails' = $script:BackendDetails }
+        }
+        $TerraformVersion = Get-TerraformVersion -BackendType $BackendType @FunctionParam
         Write-ExecCmd -Header 'INFO' -Arguments "Detected Terraform Version: $TerraformVersion"
     }
 
