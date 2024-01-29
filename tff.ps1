@@ -1,5 +1,5 @@
 ﻿<#
-.VERSION 2024.01.25
+.VERSION 2024.01.29
 #>
 
 [CmdletBinding()]
@@ -332,12 +332,14 @@ function Get-TerraformVersionRemote {
     $Hostname = $TFERemoteDetails.hostname
     $Organization = $TFERemoteDetails.organization
     $Workspace = $TFERemoteDetails.workspace
-
-    if (!$Hostname -or !$Organization -or !$Workspace) {
-        Write-Debug "Hostname: $Hostname, Organization: $Organization, Workspace: $Workspace"
-
-        Throw "TFERemoteDetails missing."
+    if (!$Hostname) {
+        $Hostname = 'app.terraform.io'
     }
+    if (!$Organization -or !$Workspace) {
+        
+        Throw 'TFERemoteDetails missing.'
+    }
+    Write-Debug "Get-TerraformVersionRemote: Hostname: $Hostname, Organization: $Organization, Workspace: $Workspace"
 
     $TfeToken = Get-TfeToken
 
