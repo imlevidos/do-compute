@@ -266,9 +266,9 @@ function Get-TerraformVersionRemote {
     Write-Verbose "Server: $Server`tOrganization: $Organization`tWorkspace: $Workspace"
 
     $global:TFERemoteDetails = @{
-        "server"       = $Server
-        "organization" = $Organization
-        "workspace"    = $Workspace
+        'server'       = $Server
+        'organization' = $Organization
+        'workspace'    = $Workspace
     }
     # Mute the editor warning
     $TFERemoteDetails | Out-Null
@@ -323,7 +323,7 @@ function Get-TerraformBackendType {
         $Content = Get-TfContent -Raw -ErrorAction Stop
     }
     catch {
-        Throw "Unable to detect Terraform backend, no *.tf files found."
+        Throw 'Unable to detect Terraform backend, no *.tf files found.'
     }
 
     $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*backend\s*\"([a-z]+)\"'
@@ -903,7 +903,7 @@ if (!$TerraformPath) {
         # Detect Terraform Version
         $BackendType = Get-TerraformBackendType
         $TerraformVersion = Get-TerraformVersion -BackendType $BackendType
-        Write-ExecCmd -Header 'INFO' -Arguments "Detected Terraform Version: $Version"
+        Write-ExecCmd -Header 'INFO' -Arguments "Detected Terraform Version: $TerraformVersion"
     }
 
     # Download Terraform or use cached version
@@ -1018,15 +1018,15 @@ if ($StatePull) {
     if (Get-Command yq -ErrorAction SilentlyContinue) {
         Write-ExecCmd -Arguments @('yq', '-P', $TempState, '>', $TempStateYaml) -SepateLine:$false -SaveToHistory:$false
         $Content = @()
-        $Content += "__metadata:"
-        $Content += "  generated: $(Get-Date -format "yyyy/MM/dd-HH:mm:ss")"
+        $Content += '__metadata:'
+        $Content += "  generated: $(Get-Date -Format 'yyyy/MM/dd-HH:mm:ss')"
         foreach ($k in $TFERemoteDetails.keys) {
             $Content += "  ${k}: $($TFERemoteDetails[$k])"
         }
         $Content += "  localPath: $(Get-Location)"
         Set-Content -Path $TempStateYaml -Value $Content
         yq -Poy $TempState | Add-Content $TempStateYaml
-        Remove-Item -Force $TempState
+        Start-Sleep -Milliseconds 200
         $TempState = $TempStateYaml
     }
 
