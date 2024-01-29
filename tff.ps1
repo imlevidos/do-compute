@@ -63,26 +63,59 @@ function Get-GitlabToken {
 }
 
 function Get-GitlabProjectVars {
+    [CmdletBinding()]
     param(
         [string]$Token,
-        [string]$Environment
+        [string]$Environment = 'auto',
+        [bool]$SetEnv = $true
     )
 
+    # Detect Token
+    if ([string]::IsNullOrEmpty($Token)) {
+        $Token = Get-GitlabToken
+    }
+    if ([string]::IsNullOrEmpty($Token)) {
+        Throw 'Unable to find Gitlab token. Please set GITLAB_TOKEN env.'
+    }
+
+    # Detect Environment
+    if ($Environment -eq 'auto') {
+        $Environment = ''
+        $Location = Get-Location
+        if ($Location -match '[\\/]environments[\\/]([a-z0-9]+)$') {
+            Write-Debug "Detected environment: $($Matches[1])"
+            $Environment = $Matches[1]
+        }
+    }
+
+    # Get Gitlab remote details
+
     $remote = git remote get-url origin
-    # Remove protocol and domain
-    $remote = $remote -replace 'https://[^/]*/', ''
-    # Remove git refix when protocol is ssh
-    $remote = $remote -replace '.*:', ''
-    # Remove .git suffix
-    $remote = $remote -replace '\.git$', ''
-    # Replace / with %2F
-    $remote = $remote -replace '/', '%2F'
+    
+    $HostAndPathPattern = '(?:.*@)?((?:https?\:\/\/)?[a-z0-9\.]+(?:\:\d{1,5})?)[:\/]([a-zA-Z0-9\/\-]+)?(?:\.git)'
+    if (!($remote -match $HostAndPathPattern)) {
+        Throw "Unable to find Gitlab host and path in remote: $remote"
+    }
+    if ($Matches.Count -ne 3) {
+        Write-Debug "Matches: $($Matches | Out-String)"
+        Throw "Unable to find Gitlab host and path in remote: $remote"
+    }
+    
+    $GitlabAddr = $Matches[1]
+    Write-Verbose "Detected Gitlab address: $GitlabAddr"
+    if ($GitlabAddr -notlike '*://*') {
+        $GitlabAddr = "https://$GitlabAddr"
+    }
+    $ProjectPath = $Matches[2] -replace '/', '%2F'
+
+    Write-Verbose "Detected Gitlab address: $GitlabAddr"
+    Write-Verbose "Detected Gitlab project path: $ProjectPath"
 
     $Headers = @{
         'PRIVATE-TOKEN' = $Token
     }
 
-    $Uri = "https://gitlab.com/api/v4/projects/$remote"
+    $Uri = "$GitlabAddr/api/v4/projects/$ProjectPath"
     try {
         $Project = Invoke-RestMethod -Uri $Uri -Headers $Headers -ErrorAction Stop
     }
@@ -96,13 +129,13 @@ function Get-GitlabProjectVars {
     $GrandParentId = $Project.namespace.parent_id
     
     $GitlabVariables = @()
-    $GitlabVariables += Invoke-RestMethod -Uri "https://gitlab.com/api/v4/projects/$ProjectId/variables" -Headers $Headers -ErrorAction Stop
+    $GitlabVariables += Invoke-RestMethod -Uri "$GitlabAddr/api/v4/projects/$ProjectId/variables" -Headers $Headers -ErrorAction Stop
 
     if ($ParentId) {
-        $GitlabVariables += Invoke-RestMethod -Uri "https://gitlab.com/api/v4/groups/$ParentId/variables" -Headers $Headers -ErrorAction Stop
+        $GitlabVariables += Invoke-RestMethod -Uri "$GitlabAddr/api/v4/groups/$ParentId/variables" -Headers $Headers -ErrorAction Stop
     }
     if ($GrandParentId) {
-        $GitlabVariables += Invoke-RestMethod -Uri "https://gitlab.com/api/v4/groups/$GrandParentId/variables" -Headers $Headers -ErrorAction Stop
+        $GitlabVariables += Invoke-RestMethod -Uri "$GitlabAddr/api/v4/groups/$GrandParentId/variables" -Headers $Headers -ErrorAction Stop
     }
 
     $varLookupList = [System.Collections.Specialized.OrderedDictionary]::new()
@@ -123,8 +156,10 @@ function Get-GitlabProjectVars {
             $Value = $GitlabVar.Value
             Write-Debug "Found Gitlab var: $($varLookup.key) = $Value"
             $result[$varLookupList[$varLookup.key]] = $Value
-            Invoke-Expression "`$env:$($varLookup.key)=`"$Value`""
-            $Message += "$($varLookup.key): $Value  "
+            if ($SetEnv) {
+                Invoke-Expression "`$env:$($varLookup.key)=`"$Value`""
+                $Message += "$($varLookup.key): $Value  "
+            }
         }
     }
 
@@ -319,6 +354,9 @@ function Get-TerraformVersionText {
 }
 
 function Get-TerraformBackendType {
+    [CmdletBinding()]
+    param()
+
     try {
         $Content = Get-TfContent -Raw -ErrorAction Stop
     }
@@ -326,8 +364,10 @@ function Get-TerraformBackendType {
         Throw 'Unable to detect Terraform backend, no *.tf files found.'
     }
 
+    Write-Verbose "Looking for terraform { backend `"...`" } syntax.."
     $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*backend\s*\"([a-z]+)\"'
     if ($Null -eq $Search.Matches) {
+        Write-Verbose 'Second attempt, looking for terraform { cloud { } } syntax..'
         # Second attempt, look for `cloud` syntax
         $Search = $Content | Select-String -Pattern 'terraform\s+{[\s\n]*(cloud)'
     }
@@ -473,8 +513,83 @@ function Get-TfContent {
     return $Filtered
 }
 
-function Get-TerraformRemoteDetailsFromCode {
-    $Content = Get-Content -Raw * .tf 
+function Get-TerraformBackendDetailsFromCode {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('none', 'cloud', 'remote', 'gcs')][string]$BackendType
+    )
+
+    if ($BackendType -eq 'none') {
+        return @{}
+    }
+    
+    $Content = Get-TfContent -Raw -ErrorAction SilentlyContinue
+    $Content = $Content -replace "`r|`n", ' '
+
+    $TFERemoteDetails = @{
+        'server'       = $null
+        'organization' = $null
+        'workspace'    = $null
+    }
+
+    if ($BackendType -eq 'cloud') {
+        $Content -match 'terraform\s*{\s*cloud\s*{\s*.*?}\s*' | Out-Null
+        if ($Matches.Count -eq 0) {
+            Throw 'Unable to get Terraform Cloud details from code.'
+        }
+        $Content = $Matches[0]
+
+        $Content -match 'organization\s*=\s*"(.*?)"' | Out-Null
+        if ($Matches -and $Matches.Count -eq 2) {
+            $TFERemoteDetails['organization'] = $Matches[1]
+            Write-Verbose "Detected Terraform Cloud organization: $($Matches[1])"
+        }
+
+        $Content -match 'workspaces\s*{\s*name\s*=\s*"(.*?)"' | Out-Null
+        if ($Matches -and $Matches.Count -eq 2) {
+            $TFERemoteDetails['workspace'] = $Matches[1]
+            Write-Verbose "Detected Terraform Cloud workspace: $($Matches[1])"
+        }
+
+        $Content -match 'hostname\s*=\s*"(.*?)"' | Out-Null
+        if ($Matches -and $Matches.Count -eq 2) {
+            $TFERemoteDetails['server'] = $Matches[1]
+            Write-Verbose "Detected Terraform Cloud server: $($Matches[1])"
+        }
+    }
+
+    if ($BackendType -eq 'remote') {
+        $Content -match 'terraform\s*{\s*backend\s*"remote"\s*{\s*.*?}\s*' | Out-Null
+        if ($Matches.Count -eq 0) {
+            Throw 'Unable to get Terraform Remote details from code.'
+        }
+        $Content = $Matches[0]
+
+        $Content -match 'organization\s*=\s*"(.*?)"' | Out-Null
+        if ($Matches -and $Matches.Count -eq 2) {
+            $TFERemoteDetails['organization'] = $Matches[1]
+            Write-Verbose "Detected Terraform Remote organization: $($Matches[1])"
+        }
+
+        $Content -match 'workspaces\s*{\s*name\s*=\s*"(.*?)"' | Out-Null
+        if ($Matches -and $Matches.Count -eq 2) {
+            $TFERemoteDetails['workspace'] = $Matches[1]
+            Write-Verbose "Detected Terraform Remote workspace: $($Matches[1])"
+        }
+
+        $Content -match 'hostname\s*=\s*"(.*?)"' | Out-Null
+        if ($Matches -and $Matches.Count -eq 2) {
+            $TFERemoteDetails['server'] = $Matches[1]
+            Write-Verbose "Detected Terraform Remote server: $($Matches[1])"
+        }
+    }
+
+    return $TFERemoteDetails
+}
+
+
+function Get-TerraformRemoteDetailsFromCodeRemote {
+    $Content = Get-Content -Raw '*.tf' 
     $Search = $Content | Select-String -Pattern 'terraform\s*{[\s\n]*backend\s*\"[a-z]+\"\s*{[\s\n]*hostname\s*=\s*\"(.*)\"[\s\n]*organization\s*=\s*\"(.*)\"[\s\n]*workspaces\s*{[\s\n]*(?:#.*\n)\s*name\s*=\s*\"(.*)\"'
 
     if ($null -eq $Search) {
@@ -627,39 +742,64 @@ function Invoke-TerraformInit {
         [bool]$Reconfigure,
         [string[]]$TfInitArgs
     )
+
+    $lastError = $null
+    $retries = 0
+
+    while ($retries -le 1) {
+        $retries++;
+
+        switch ($lastError) {
+            'BackendConfigEnvNeeded' {
+                Get-GitlabProjectVars -Token $GitlabToken
+            }
+        }
+
     
-    if ($Script:InitCompleted) {
-        Write-Verbose 'Terraform init already completed.'
-        return
-    }
-
-    Write-Debug "Attempting: terraform init for backend type: $BackendType"
-    if (Test-Path -Path './tf-init.ps1') {
-        Write-ExecCmd 'tf-init.ps1'
-        & .\tf-init.ps1
-    }
-    else {
-        $TfCmd = @($TerraformPath, 'init')
-        if ($TfInitArgs) {
-            $TfCmd += $TfInitArgs
+        if ($Script:InitCompleted) {
+            Write-Verbose 'Terraform init already completed.'
+            return
         }
 
-        if ($BackendType -eq 'gcs') {
-            $TfCmd += "-backend-config=`"access_token=$env:TF_VAR_GOOGLE_ACCESS_TOKEN`""
-        } 
-        if ($Reconfigure -and $BackendType -notin @('remote', 'cloud')) {
-            $TfCmd += '-reconfigure'
+        Write-Debug "Attempting: terraform init for backend type: $BackendType"
+        if (Test-Path -Path './tf-init.ps1') {
+            Write-ExecCmd 'tf-init.ps1'
+            & .\tf-init.ps1
+        }
+        else {
+            $TfCmd = @($TerraformPath, 'init')
+            if ($TfInitArgs) {
+                $TfCmd += $TfInitArgs
+            }
+
+            if ($BackendType -eq 'gcs') {
+                $TfCmd += "-backend-config=`"access_token=$env:TF_VAR_GOOGLE_ACCESS_TOKEN`""
+            } 
+            if ($Reconfigure -and $BackendType -notin @('remote', 'cloud')) {
+                $TfCmd += '-reconfigure'
+            }
+
+            Write-ExecCmd -Arguments $TfCmd -NewLineBefore
+            Invoke-Expression "& $TfCmd" 2>&1 | Tee-Object -Variable ProcessOutput | Write-Host
         }
 
-        Write-ExecCmd -Arguments $TfCmd -NewLineBefore
-        Invoke-Expression "& $TfCmd" | Write-Host
-    }
+        if ($LASTEXITCODE -eq 0) {
+            $Script:InitCompleted = $true
+            Write-Verbose 'Terraform init completed successfully.'
+            Return
+        }
 
-    if ($LASTEXITCODE -ne 0) {
+        $BackendConfigEnvNeededPattern = 'or as an environment variable: TF_CLOUD_ORGANIZATION'
+
+        if ($ProcessOutput -match $BackendConfigEnvNeededPattern) {
+            Write-Debug 'Backend config env vars needed, attempting to find them'
+            $lastError = 'BackendConfigEnvNeeded'
+            Continue
+        }
+
+    
         Throw "Terraform init failed with exit code: $LASTEXITCODE"
     }
-
-    $Script:InitCompleted = $true
 }
 
 function Invoke-TerraformProviderLockFix {
@@ -886,13 +1026,24 @@ if ($isDotSourced) {
 $script:InitCompleted = $false
 $script:ScriptCommand = $MyInvocation.Line
 
-###
 ###   [ START ]
 ###
 
 $InvokeTfDlParams = @{}
 if ($env:TF_ENV_PS_DIR) {
     $InvokeTfDlParams['OutDir'] = $env:TF_ENV_PS_DIR
+}
+
+$NeedsBackendInfo = $true
+if ($NeedsBackendInfo) {
+    $BackendType = Get-TerraformBackendType
+    if ($BackendType -in @('cloud', 'remote')) {
+        $BackendDetails = Get-TerraformBackendDetailsFromCode -BackendType $BackendType
+    
+        if (!$BackendDetails.server -or !$BackendDetails.organization -or !$BackendDetails.workspace) {
+            $BackendDetails = Get-GitlabProjectVars
+        }
+    }
 }
 
 
@@ -981,6 +1132,11 @@ if ($IsGoogleTokenRequired) {
 # else {
 #   Write-Host 'File token-google.secret does not exist'
 # }
+
+#Region Backend
+
+#EndRegion
+
 
 #Region [ TfStateList / TfStateShow ]
 
