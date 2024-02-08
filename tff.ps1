@@ -769,6 +769,7 @@ function Invoke-TerraformMainRun {
         [Parameter(Mandatory = $false)][string[]]$TfArgs
     )
 
+    Write-Verbose "Entering: Invoke-TerraformMainRun -TerraformPath $TerraformPath -Action $Action -TfArgs $TfArgs"
     Write-Information "Starting Terraform ${Action}..`n"
 
     $retries = 0
@@ -1038,7 +1039,7 @@ function Invoke-TfStatePull {
 
 function Write-ExecCmd {
     param(
-        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Arguments,
         [string]$Header = 'EXEC',
         [switch]$SaveToHistory,
         [switch]$SepateLine,
