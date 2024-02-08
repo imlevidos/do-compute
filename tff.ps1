@@ -607,7 +607,7 @@ function Get-LatestTerraformVersion {
 
 function Invoke-TerraformDownload {
     param(
-        [Parameter(Mandatory = $true)][string]$Version,
+        [string]$Version,
         [string]$OutDir
     )
 
