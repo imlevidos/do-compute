@@ -13,6 +13,7 @@ param(
     [switch]$StateShow,
     [switch]$StatePull,
     [switch]$StateList,
+    [switch]$StateRM,
     [string]$TerraformPath,
     [string]$TerraformVersion
 )
@@ -703,24 +704,61 @@ function Invoke-TerraformInit {
         [string[]]$TfInitArgs
     )
 
-    $lastError = $null
-    $retries = 0
+    if ($Script:InitCompleted) {
+        Write-Verbose 'Terraform init already completed.'
+        return
+    }
 
-    while ($retries -le 1) {
-        $retries++;
+    # Each error fix can be retried only once
+    $retries = @{}
+    $ProcessOutput = $null
 
-        switch ($lastError) {
-            'BackendConfigEnvNeeded' {
+    $ErrorFixes = @{
+        "BackendConfigEnvNeeded"  = @{
+            pattern = 'or as an environment variable: TF_CLOUD_ORGANIZATION'
+            message = 'Backend config env vars needed, attempting to find them.'
+            fix     = {
                 Get-GitlabProjectVars -Token $GitlabToken
             }
         }
 
-        if ($Script:InitCompleted) {
-            Write-Verbose 'Terraform init already completed.'
-            return
+        "InitUpgradeNeeded"       = @{
+            pattern = 'Error:.*Failed to query available provider packages'
+            message = 'Provider upgrade needed'
+            fix     = {
+                $TfInitArgs += '-upgrade'
+            }
         }
 
-        Write-Debug "Attempting: terraform init for backend type: $BackendType"
+        "DependencyLockFixNeeded" = @{
+            pattern = 'checksums recorded in the dependency lock file'
+            message = 'Provider lock fix needed.'
+            fix     = {
+                Invoke-TerraformProviderLockFix
+            }
+        }
+    }
+    
+    Write-Debug "Attempting: terraform init for backend type: $BackendType"
+
+    while (!($retries.Values -gt 1)) {
+
+        if ($ProcessOutput) {
+            foreach ($fix in $ErrorFixes.GetEnumerator()) {
+                if ($processOutput -match $fix.value.pattern) {
+                    Write-Warning $fix.value.message
+                    Invoke-Command -ScriptBlock $fix.value.fix
+                    $retries[$fix.Name] += 1
+                    Break
+                }
+            }
+
+            if (!$Matches) {
+                Write-Warning "Unknown error, retrying anyway."
+                $retries["UnknownError"] = 2
+            }
+        }
+
         if (Test-Path -Path './tf-init.ps1') {
             Write-ExecCmd 'tf-init.ps1'
             & .\tf-init.ps1
@@ -739,7 +777,7 @@ function Invoke-TerraformInit {
             }
 
             Write-ExecCmd -Arguments $TfCmd -NewLineBefore
-            Invoke-Expression "& $TfCmd" 2>&1 | Tee-Object -Variable ProcessOutput | Write-Host
+            Invoke-Expression "& $TfCmd 2>&1" | Tee-Object -Variable ProcessOutput | Write-Host
         }
 
         if ($LASTEXITCODE -eq 0) {
@@ -747,18 +785,9 @@ function Invoke-TerraformInit {
             Write-Verbose 'Terraform init completed successfully.'
             Return
         }
-
-        $BackendConfigEnvNeededPattern = 'or as an environment variable: TF_CLOUD_ORGANIZATION'
-
-        if ($ProcessOutput -match $BackendConfigEnvNeededPattern) {
-            Write-Debug 'Backend config env vars needed, attempting to find them'
-            $lastError = 'BackendConfigEnvNeeded'
-            Continue
-        }
-
-    
-        Throw "Terraform init failed with exit code: $LASTEXITCODE"
     }
+    
+    Throw "Terraform init failed with exit code: $LASTEXITCODE"
 }
 
 function Invoke-TerraformMainRun {
@@ -834,6 +863,16 @@ function Invoke-TerraformMainRun {
 
 
 function Invoke-TerraformProviderLockFix {
+    if ([string]::IsNullOrEmpty($TerraformPath)) {
+        Throw 'Terraform path not set.'
+    }
+
+    # In Terraform 0.14 we may need to delete .terraform.lock.hcl
+    if (Test-Path '.terraform.lock.hcl') {
+        Write-Warning 'Deleting .terraform.lock.hcl'
+        Remove-Item -Path '.terraform.lock.hcl'
+    }
+
     $Params = 'providers lock -platform=windows_amd64 -platform=darwin_amd64 -platform=linux_amd64' -split ' '
     $TfCmd = @($TerraformPath)
     $TfCmd += $Params
@@ -993,6 +1032,44 @@ function Invoke-TfStateShow {
     }
 }
 
+function Invoke-TfStateRM {
+    param(
+        [Parameter(Mandatory = $true)][string]$TerraformPath
+    )
+
+    Write-ExecCmd -Header 'INFO' -Arguments "Fetching Terraform state list"
+    $global:TfStateList = & $TerraformPath state list
+    $Selection = $TfStateList | Out-GridView -Title 'Select resources to DELETE FROM THE STATE' -PassThru
+    if (!$Selection) {
+        Return
+    }
+
+    Write-Host "Delete the following resources from the state?" -ForegroundColor Red
+    Write-Host ($Selection -join "`n")
+    $response = Read-Host -Prompt 'Delete? (y/n)'
+    if ($response -notmatch '^(y|yes)$') {
+        Return
+    }
+
+    # Creating backup
+    $DownloadDir = "$env:USERPROFILE\Downloads"
+    $TempFile = Get-Location | Split-Path -Leaf
+    $Suffix = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $TempState = "$DownloadDir\$TempFile-$Suffix.tfstate.json"
+    Write-ExecCmd -Arguments @($TerraformPath, "state pull > $TempState") -SepateLine:$false
+
+    & $TerraformPath state pull | Set-Content $TempState
+    if ($LASTEXITCODE -ne 0) {
+        Throw "Error backing up the state: $LASTEXITCODE"
+    }
+
+    foreach ($item in $Selection) {
+        $item = $item -replace '"', '\"'
+        Write-ExecCmd -Arguments @($TerraformPath, 'state rm', $item)
+        & $TerraformPath state rm $item
+    }
+}
+
 function Invoke-TfStatePull {
 
     $DownloadDir = "$env:USERPROFILE\Downloads"
@@ -1111,7 +1188,7 @@ $InvokeTfDlParams = @{}
 if ($env:TF_ENV_PS_DIR) {
     $InvokeTfDlParams['OutDir'] = $env:TF_ENV_PS_DIR
 }
-if ($StateList -or $StateShow -or $StatePull) {
+if ($StateList -or $StateShow -or $StatePull -or $StateRM) {
     $Action = 'state'
 }
 
@@ -1231,6 +1308,10 @@ try {
 
     if ($StatePull) {
         Invoke-TfStatePull -TerraformPath $TerraformPath
+    }
+
+    if ($StateRM) {
+        Invoke-TfStateRM -TerraformPath $TerraformPath
     }
 
 
