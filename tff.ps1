@@ -1,5 +1,5 @@
 ﻿<#
-.VERSION 2024.01.29
+.VERSION 2024.03.21
 #>
 
 [CmdletBinding()]
@@ -405,12 +405,15 @@ function Get-TfContent {
         [switch]$Raw
     )
 
-    $SpecialModes = "\/\*|\*\/|\/\/|\`"|#"
+    Write-Verbose "Entering: Get-TfContent"
+
+    $SpecialModes = "\/\*|\*\/|\/\/|\`"|#" # /* | */ | // | " | #
     $MLCommentLevel = 0
 
     $Content = Get-Content $Path
     $Filtered = @()
     foreach ($line in $Content) {
+        Write-Verbose "Line: $line"
         if ($MLCommentLevel -gt 0) {
             if ($line -match '\*\/') {
                 $line = $line -replace '.*\*\/', ''
@@ -449,6 +452,10 @@ function Get-TfContent {
                         $MLCommentLevel = 0
                         $CommentLineCheck = $CommentLineCheck -replace '.*\*\/', ''
                         $line = $line -replace '.*\*\/', ''
+                    }
+                    '//' {
+                        $CommentLineCheck = $CommentLineCheck -replace '//.*$', ''
+                        $line = $line -replace '//.*$', ''
                     }
                 }
     
@@ -726,7 +733,8 @@ function Invoke-TerraformInit {
             pattern = 'Error:.*Failed to query available provider packages'
             message = 'Provider upgrade needed'
             fix     = {
-                $TfInitArgs += '-upgrade'
+                Write-Debug "Appending -upgrade to `$TfInitArgs"
+                $script:TfInitArgs += '-upgrade'
             }
         }
 
@@ -765,8 +773,9 @@ function Invoke-TerraformInit {
         }
         else {
             $TfCmd = @($TerraformPath, 'init')
-            if ($TfInitArgs) {
-                $TfCmd += $TfInitArgs
+            Write-Verbose "`$TfInitArgs = $script:TfInitArgs"
+            if ($script:TfInitArgs) {
+                $TfCmd += $script:TfInitArgs
             }
 
             if ($BackendType -eq 'gcs') {
@@ -928,9 +937,9 @@ function Invoke-TerraformValidate {
         $pattern = ($InitNeededErrors | ForEach-Object { [regex]::Escape($_) }) -join '|'
         # Write-Verbose 'Process output is:'
         # Write-Verbose $($ProcessOutput | Out-String)
-        # Write-Verbose "REGEX PATTERN: $pattern"
+        Write-Verbose "REGEX PATTERN: $pattern"
         if ($ProcessOutput -match $pattern) {
-            Write-Debug 'Module not installed, Terraform init needed.'
+            Write-Warning 'Modules not installed, Terraform init needed.'
             $lastError = 'InitNeeded'
             Continue
         }
