@@ -4,7 +4,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('apply', 'plan', 'destroy', 'init', 'state', 'import', 'login', 'version', 'output', 'validate', 'taint', 'fmt')][string]$Action = 'apply',
+    [ValidateSet('apply', 'plan', 'destroy', 'init', 'state', 'import', 'login', 'version', 'output', 'validate', 'taint', 'untaint', 'fmt', '')][string]$Action = '',
     [string[]]$TfArgs = @(),
     [switch]${Auto-Approve},
     [switch]$ShutDown,
@@ -15,7 +15,8 @@ param(
     [switch]$StateList,
     [switch]$StateRM,
     [string]$TerraformPath,
-    [string]$TerraformVersion
+    [string]$TerraformVersion,
+    [switch]$Upgrade # assuming it's tf init -upgrade
 )
 
 <#
@@ -901,7 +902,7 @@ function Invoke-TerraformValidate {
     $lastError = $null
     $retries = 0
 
-    # Terraform Init Loop
+    # Terraform k Loop
     while ($retries -le 1) {
         $retries++;
 
@@ -1187,7 +1188,6 @@ if ($isDotSourced) {
 $script:InitCompleted = $false
 $script:ScriptCommand = $MyInvocation.Line
 
-###
 ###   [ START ]
 ###
 
@@ -1202,9 +1202,8 @@ if ($StateList -or $StateShow -or $StatePull -or $StateRM) {
 }
 
 try {
-
     $isTerraformDetectNeeded = !$TerraformPath -and !$TerraformVersion
-    $isInitNeeded = $action -notin @('version', 'fmt')
+    $isInitNeeded = $action -notin @('version', 'fmt', '')
 
     #Region [ Detect Terraform Backend Details ]
 
@@ -1286,6 +1285,10 @@ try {
         if (!($TfInitArgs) -and $TfArgs) {
             $TfInitArgs = $TfArgs
         }
+
+        if ($Upgrade) {
+            $TfInitArgs += '-upgrade'
+        }
     
         Invoke-TerraformInit -TerraformPath $TerraformPath -BackendType $BackendType -TfInitArgs $TfInitArgs
     }
@@ -1294,7 +1297,7 @@ try {
         Invoke-TerraformOutput -TerraformPath $TerraformPath -TfArgs $TfArgs
     }
 
-    if ($Action -in @('taint', 'login', 'fmt', 'version')) {
+    if ($Action -in @('taint', 'untaint', 'login', 'fmt', 'version')) {
         Write-ExecCmd -Arguments (@($TerraformPath, $Action, ($TfArgs -join ' ')) -join ' ')
         & $TerraformPath $Action $TfArgs
     }
