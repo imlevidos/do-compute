@@ -94,7 +94,7 @@ function Get-GitlabProjectVars {
 
     $remote = git remote get-url origin
     
-    $HostAndPathPattern = '(?:.*@)?((?:https?\:\/\/)?[a-z0-9\.]+(?:\:\d{1,5})?)[:\/]([a-zA-Z0-9\/\-]+)?(?:\.git)'
+    $HostAndPathPattern = '(?:.*@)?((?:https?\:\/\/)?[a-z0-9\.-]+(?:\:\d{1,5})?)[:\/]([a-zA-Z0-9\/\-]+)?(?:\.git)'
     if (!($remote -match $HostAndPathPattern)) {
         Throw "Unable to find Gitlab host and path in remote: $remote"
     }
