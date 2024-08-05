@@ -6,6 +6,7 @@
 param(
     [ValidateSet('apply', 'plan', 'destroy', 'init', 'state', 'import', 'login', 'version', 'output', 'validate', 'taint', 'untaint', 'fmt', '')][string]$Action = '',
     [string[]]$TfArgs = @(),
+    [string]$TfArg2,
     [switch]${Auto-Approve},
     [switch]$ShutDown,
     [string]$VarFile,
@@ -871,7 +872,6 @@ function Invoke-TerraformMainRun {
     }
 }
 
-
 function Invoke-TerraformProviderLockFix {
     if ([string]::IsNullOrEmpty($TerraformPath)) {
         Throw 'Terraform path not set.'
@@ -1192,6 +1192,7 @@ $script:ScriptCommand = $MyInvocation.Line
 ###
 
 $WEMessages = @()
+$TFArgs += $TfArg2
 
 $InvokeTfDlParams = @{}
 if ($env:TF_ENV_PS_DIR) {
@@ -1237,7 +1238,6 @@ try {
 
     }
 
-
     if (!$TerraformPath) {
         $TerraformPath = Invoke-TerraformDownload -Version $TerraformVersion @InvokeTfDlParams
 
@@ -1257,7 +1257,6 @@ try {
 
     }
 
-
     if (Get-IsGoogleTokenRequired -and $isInitNeeded) {
         # GOOGLE_ACCESS_TOKEN
         $TokenTTL = 0
@@ -1275,7 +1274,6 @@ try {
         }
     }
     
-
     if ($Action -in @('validate', 'plan', 'apply', 'destroy')) {
         Invoke-TerraformValidate -TerraformPath $TerraformPath -BackendType $BackendType -TfInitArgs $TfInitArgs
     }
@@ -1307,6 +1305,13 @@ try {
         & $TerraformPath $Action $TfArgs
     }
 
+    if ($Action -eq 'import') {
+        $TfArgs = $TfArgs.replace('"', '\"')
+        $TfArgs = $TFArgs -replace "\[([a-z][a-z0-9]*)\]", '[\"$1\"]'
+        Write-ExecCmd -Arguments (@($TerraformPath, $Action, ($TfArgs -join ' '), $TfArg2) -join ' ')
+        & $TerraformPath $Action $TfArgs $TfArg2
+    }
+
     if ($StateList) {
         Write-ExecCmd -Arguments @($TerraformPath, 'state list')
         & $TerraformPath state list | Tee-Object -Variable TfStateList
@@ -1326,27 +1331,25 @@ try {
         Invoke-TfStateRM -TerraformPath $TerraformPath
     }
 
-
     #Region [ PREP: Plan / Apply]
 
     if ($ShutDown) {
         $TfArgs += '-var=shutdown=true'
     }
+
     if (${Auto-Approve}) {
         $TfArgs += '-auto-approve'
     }
+
     if ($VarFile) {
         $TfArgs += "-var-file=$VarFile"
     }
 
     #EndRegion
 
-
     if ($Action -in @('plan', 'apply', 'destroy')) {
         Invoke-TerraformMainRun -TerraformPath $TerraformPath -Action $Action -TfArgs $TfArgs
     }
-
-
 
     if ($Action -in @('apply', 'destroy', 'output')) {
         # POST ACTIONS
@@ -1357,10 +1360,8 @@ try {
         $WEMessages += @{ 'Header' = 'RUNID'; 'Arguments' = "-> $TfRunUrl (`$TfRunUrl)"; }
         $global:TfRunUrl = $TfRunUrl
     }
-    
-
-
 }
+
 finally {
     if ($WEMessages) {
         $WEMessages | ForEach-Object {
